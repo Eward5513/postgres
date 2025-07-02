@@ -1,9 +1,12 @@
-#include "../include/tsdmp.h"
-#include "../include/create_index.h"
+// 使用统一的安全头文件处理PostgreSQL和libintl.h冲突
+#include "../include/safe_header.h"
 
+// 扩展特有的PostgreSQL宏必须在extern "C"块内定义
+extern "C" {
+// PG_MODULE_MAGIC必须在extern "C"块内部定义
 PG_MODULE_MAGIC;
 
-// PostgreSQL function info declarations (only in this file)
+// PostgreSQL function info declarations也必须在extern "C"块内部
 PG_FUNCTION_INFO_V1(tsdmp_load_data);
 PG_FUNCTION_INFO_V1(tsdmp_build_index);
 PG_FUNCTION_INFO_V1(tsdmp_range_query);
@@ -12,6 +15,9 @@ PG_FUNCTION_INFO_V1(tsdmp_clear_data);
 PG_FUNCTION_INFO_V1(tsdmp_get_stats);
 PG_FUNCTION_INFO_V1(tsdmp_set_config);
 PG_FUNCTION_INFO_V1(tsdmp_get_config);
+}
+
+#include "../include/tsdmp.h"
 
 // Global variables
 MemoryContext tsdmp_memory_context = NULL;

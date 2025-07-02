@@ -1,7 +1,17 @@
 MODULE_big = tsdmp
 
-# Include only our extension source files (all C++)
-OBJS = src/extension.o src/main.o #src/create_index.o src/file_sorter.o
+# Include all our extension source files (all C++)
+OBJS = src/extension.o \
+       src/main.o \
+       src/data_loader.o \
+       src/file_sorter.o \
+       src/spatiotemporal_data.o \
+       src/octree_node.o \
+       src/userdata_manager.o \
+       src/kdtree_node_manager.o \
+       src/octree_node_manager.o \
+       src/mesh_connection_manager.o \
+       src/pgutils.o
 
 EXTENSION = tsdmp
 DATA = tsdmp--1.0.sql
@@ -9,27 +19,26 @@ PGFILEDESC = "TSDMP - Time-Spatial Data Management Platform Extension"
 
 
 # 使用PGXS构建系统（默认）
-ifndef NO_PGXS
-PG_CONFIG = pg_config
-PGXS := $(shell $(PG_CONFIG) --pgxs)
-include $(PGXS)
-else
+# ifndef NO_PGXS
+# PG_CONFIG = pg_config
+# PGXS := $(shell $(PG_CONFIG) --pgxs)
+# include $(PGXS)
+# else
 # 仅在明确禁用PGXS时使用传统构建方式
 subdir = contrib/tsdmp
 top_builddir = ../..
 include $(top_builddir)/src/Makefile.global
 include $(top_srcdir)/contrib/contrib-global.mk
-endif
+# endif
 
-# 在包含PGXS后，强制使用C++编译器
-override CC = g++
-override CXX = g++
+# 不要完全覆盖CC，而是在需要时使用CXX
+# 让PGXS处理编译器选择，只添加C++特定的设置
 
 # 过滤掉C++编译器不支持的选项
 override CFLAGS := $(filter-out -fexcess-precision=standard,$(CFLAGS))
 override CPPFLAGS := $(filter-out -fexcess-precision=standard,$(CPPFLAGS))
 
-# 只添加项目特定的头文件路径（不覆盖pg_config的设置）
+# 添加C++17支持和项目头文件路径
 override CPPFLAGS += -std=c++17 -I./include
 
 # 调试选项
@@ -39,7 +48,7 @@ else
     override CPPFLAGS += -O2 -DNDEBUG
 endif
 
-# 只添加必要的额外链接库（保持pg_config的默认链接设置）
+# 添加C++链接库
 override SHLIB_LINK += -lstdc++
 
 # 编译扩展源文件的规则（C++）

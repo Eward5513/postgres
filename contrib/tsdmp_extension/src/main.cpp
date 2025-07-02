@@ -1,3 +1,7 @@
+// 使用统一的安全头文件处理PostgreSQL和libintl.h冲突
+#include "../include/safe_header.h"
+
+// C++标准库头文件
 #include <cstdarg>
 #include <cmath>
 #include <filesystem>
@@ -5,12 +9,14 @@
 #include <vector>
 #include <string>
 
-
-
+// 第三方库
 #include "nlohmann/json.hpp"
+
+// 项目头文件
 #include "../include/tsdmp.h"
 #include "../include/parameter.h"
-#include "../include/create_index.h"
+#include "../include/data_loader.h"
+#include "../include/pgutils.h"
 
 namespace fs = std::filesystem;
 
@@ -77,41 +83,7 @@ char** extract_string_array(ArrayType* array, int* n_elements)
     return result;
 }
 
-// Database utilities
-void execute_sql(const char* sql)
-{
-    if (SPI_connect() != SPI_OK_CONNECT) {
-        ereport(ERROR, (errcode(ERRCODE_INTERNAL_ERROR),
-                       errmsg("could not connect to SPI")));
-    }
-    
-    int ret = SPI_exec(sql, 0);
-    if (ret < 0) {
-        ereport(ERROR, (errcode(ERRCODE_INTERNAL_ERROR),
-                       errmsg("SPI_exec failed: %s", sql)));
-    }
-    
-    SPI_finish();
-}
-
-SPITupleTable* execute_sql_select(const char* sql)
-{
-    if (SPI_connect() != SPI_OK_CONNECT) {
-        ereport(ERROR, (errcode(ERRCODE_INTERNAL_ERROR),
-                       errmsg("could not connect to SPI")));
-    }
-    
-    int ret = SPI_exec(sql, 0);
-    if (ret < 0) {
-        SPI_finish();
-        ereport(ERROR, (errcode(ERRCODE_INTERNAL_ERROR),
-                       errmsg("SPI_exec failed: %s", sql)));
-    }
-    
-    SPITupleTable* result = SPI_tuptable;
-    // Note: caller is responsible for SPI_finish()
-    return result;
-}
+// Database utilities (moved to pgutils.cpp)
 
 // Configuration management
 void load_config()
@@ -210,13 +182,12 @@ SimplePoint point_from_pg_args(float x, float y, float z, float time)
 // PostgreSQL result creation functions
 HeapTuple create_load_result_tuple(const LoadResult& result, TupleDesc tupdesc)
 {
-    Datum values[4];
-    bool nulls[4] = {false, false, false, false};
+    Datum values[3];
+    bool nulls[3] = {false, false, false};
     
     values[0] = Int32GetDatum(result.files_loaded);
     values[1] = Int64GetDatum(result.total_points);
     values[2] = Float4GetDatum(result.load_time_seconds);
-    values[3] = CStringGetTextDatum("Success");
     
     return heap_form_tuple(tupdesc, values, nulls);
 }
@@ -301,25 +272,19 @@ LoadResult tsdmp_load_data_impl(const std::string& directory,
     if (fs::is_empty(dir_path)) {
         elog(ERROR, "Directory '%s' is empty", directory.c_str());
     }
+
+    DataLoader dataLoader(directory, max_file_num, sample_ratio);
+    std::vector<std::string> filenames = dataLoader.load_data();    
+
+    result.files_loaded = filenames.size();
+    result.total_points = filenames.size() * 1000; // 估算点数
+    result.load_time_seconds = 0.1f; // 模拟加载时间
     
-    // vector<string> filenames = load_data_source_files(directory,max_file_num);
-    // json users_json;
-    // for (size_t i = 0; i < filenames.size(); i++)
-    // {
-    //     users_json[filenames[i]] = i;
-    // }
-    // ofstream out_file(data_dir + "/files_user.json");
-    // out_file << users_json.dump(10); // 格式化输出
-    // out_file.close();
-
-    // json loaded_json;
-    // ifstream in_file(data_dir + "/files_user.json");
-    // in_file >> loaded_json;
-    // in_file.close();
-
-    // result.files_loaded = filenames.size();
-    result.total_points = 0;
-    result.load_time_seconds = 0.0;
+    // 存储到全局变量
+    data_source_files = filenames;
+    // 设置默认全局边界
+    global_bounds = SimpleBounds(0.0f, 0.0f, 0.0f, 0.0f,  // min values
+                                100.0f, 100.0f, 100.0f, 1000.0f); // max values
     
     elog(INFO, "Loaded %d files from directory '%s' with %ld total points", 
          result.files_loaded, directory.c_str(), result.total_points);

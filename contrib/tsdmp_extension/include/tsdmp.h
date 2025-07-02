@@ -1,38 +1,14 @@
 #ifndef TSDMP_H
 #define TSDMP_H
 
+#include "safe_header.h"
+
 // Standard C++ headers
 #include <string>
 #include <vector>
 #include <map>
 #include <memory>
 #include <stdexcept>
-
-// PostgreSQL headers
-extern "C" {
-#include "postgres.h"
-#include "fmgr.h"
-#include "funcapi.h"
-#include "utils/array.h"
-#include "utils/builtins.h"
-#include "utils/memutils.h"
-#include "utils/lsyscache.h"
-#include "catalog/pg_type.h"
-#include "executor/spi.h"
-#include "access/htup_details.h"
-#include "utils/rel.h"
-#include "utils/syscache.h"
-#include "miscadmin.h"
-#include "storage/ipc.h"
-#include "storage/proc.h"
-#include "postmaster/bgworker.h"
-#include "catalog/namespace.h"
-#include "parser/parse_type.h"
-#include "utils/typcache.h"
-#include "utils/errcodes.h"
-#include "nodes/makefuncs.h"
-#include "parser/parser.h"
-}
 
 // Simplified data structures (independent of TSDMP)
 struct SimpleBounds {
@@ -65,7 +41,6 @@ struct SimplePoint {
 typedef struct {
     int32 files_loaded;
     int64 total_points;
-    SimpleBounds global_bounds;
     float load_time_seconds;
 } LoadResult;
 
@@ -127,9 +102,7 @@ namespace tsdmp {
     // Array utilities
     char** extract_string_array(ArrayType* array, int* n_elements);
     
-    // Database utilities
-    void execute_sql(const char* sql);
-    SPITupleTable* execute_sql_select(const char* sql);
+    // Database utilities (moved to pgutils.h)
     
     // Configuration management
     void load_config();

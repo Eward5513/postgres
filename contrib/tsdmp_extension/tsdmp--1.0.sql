@@ -20,23 +20,10 @@ CREATE TYPE spatiotemporal_point AS (
     color_b SMALLINT
 );
 
--- 空间边界类型
-CREATE TYPE spatial_bounds AS (
-    min_x REAL,
-    min_y REAL,
-    min_z REAL,
-    max_x REAL,
-    max_y REAL,
-    max_z REAL,
-    min_time REAL,
-    max_time REAL
-);
-
 -- 加载结果类型
 CREATE TYPE load_result AS (
     files_loaded INTEGER,
     total_points BIGINT,
-    global_bounds spatial_bounds,
     load_time_seconds REAL
 );
 
@@ -48,13 +35,6 @@ CREATE TYPE index_result AS (
     total_kdtree_nodes INTEGER
 );
 
--- 查询结果类型
-CREATE TYPE query_result AS (
-    points spatiotemporal_point[],
-    result_count INTEGER,
-    query_time_ms REAL
-);
-
 -- kNN查询结果类型
 CREATE TYPE knn_result AS (
     distance REAL,
@@ -63,68 +43,27 @@ CREATE TYPE knn_result AS (
 
 -- 创建存储表
 
--- 原始数据表
-CREATE TABLE IF NOT EXISTS tsdmp_raw_data (
-    id SERIAL PRIMARY KEY,
-    file_path TEXT NOT NULL UNIQUE,
-    file_type VARCHAR(10),
-    data_points BYTEA,
-    point_count BIGINT,
-    bounds spatial_bounds,
-    user_id SMALLINT,
+-- 八叉树节点存储表 (用于序列化的二进制数据存储)
+CREATE TABLE IF NOT EXISTS all_octree_table (
+    key INT PRIMARY KEY,
+    data BYTEA,
     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
     updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
 );
 
--- 索引结构表 - 八叉树节点
-CREATE TABLE IF NOT EXISTS tsdmp_octree_nodes (
-    chunk_id INTEGER,
-    node_id INTEGER,
-    parent_id INTEGER,
-    level INTEGER,
-    bounds spatial_bounds,
-    is_leaf BOOLEAN,
-    point_count BIGINT,
-    children INTEGER[8],
+-- KD树节点存储表 (用于序列化的二进制数据存储)
+CREATE TABLE IF NOT EXISTS all_kdtree (
+    key1 INT,
+    key2 INT,
+    data BYTEA,
     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-    PRIMARY KEY (chunk_id, node_id)
+    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    PRIMARY KEY (key1, key2)
 );
-
--- 索引结构表 - KD树节点
-CREATE TABLE IF NOT EXISTS tsdmp_kdtree_nodes (
-    chunk_id INTEGER,
-    octree_node_id INTEGER,
-    kd_node_id INTEGER,
-    point spatiotemporal_point,
-    left_child INTEGER,
-    right_child INTEGER,
-    division_axis SMALLINT,
-    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-    PRIMARY KEY (chunk_id, octree_node_id, kd_node_id)
-);
-
--- 系统配置表
-CREATE TABLE IF NOT EXISTS tsdmp_config (
-    key VARCHAR(100) PRIMARY KEY,
-    value TEXT,
-    description TEXT,
-    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-);
-
--- 插入默认配置
-INSERT INTO tsdmp_config (key, value, description) VALUES
-('chunk_max_level', '6', 'Maximum level for chunk subdivision'),
-('octree_max_level', '12', 'Maximum level for octree nodes'),
-('max_point_per_leaf', '400', 'Maximum points per leaf node'),
-('thread_pool_size', '32', 'Thread pool size for parallel processing'),
-('sample_ratio', '0.1', 'Sampling ratio for index construction')
-ON CONFLICT (key) DO NOTHING;
 
 -- 创建索引
-CREATE INDEX IF NOT EXISTS idx_tsdmp_raw_data_file_type ON tsdmp_raw_data(file_type);
-CREATE INDEX IF NOT EXISTS idx_tsdmp_raw_data_user_id ON tsdmp_raw_data(user_id);
-CREATE INDEX IF NOT EXISTS idx_tsdmp_octree_nodes_level ON tsdmp_octree_nodes(level);
-CREATE INDEX IF NOT EXISTS idx_tsdmp_octree_nodes_is_leaf ON tsdmp_octree_nodes(is_leaf);
+CREATE INDEX IF NOT EXISTS idx_all_octree_table_key ON all_octree_table(key);
+CREATE INDEX IF NOT EXISTS idx_all_kdtree_key1_key2 ON all_kdtree(key1, key2);
 
 -- 函数声明
 
