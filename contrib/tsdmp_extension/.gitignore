@@ -1,0 +1,88 @@
+# IDE directories and files
+.idea/
+.vscode/
+*.iml
+*.ipr
+*.iws
+*.code-workspace
+.idea_modules/
+
+# Build artifacts
+*.o
+*.so
+*.a
+*.dylib
+*.dll
+
+# PostgreSQL extension build files
+*.bc
+*.control~
+*.sql~
+
+# CMake build directories and files (if CMake is used)
+build/
+build-*/
+cmake-build-*/
+CMakeCache.txt
+CMakeFiles/
+cmake_install.cmake
+Makefile.cmake
+.cmake/
+
+# Temporary files
+*~
+*.tmp
+*.temp
+*.swp
+*.swo
+.DS_Store
+Thumbs.db
+
+# Log files
+*.log
+
+# Backup files
+*.bak
+*.backup
+
+# Core dumps
+core
+core.*
+
+# Compiled source files from original TSDMP
+../TSDMP/src/*.o
+
+# Test output
+test/results/
+test/tmp/
+
+# Package files
+*.tar.gz
+*.zip
+*.deb
+*.rpm
+
+# Autotools (if used)
+autom4te.cache/
+config.log
+config.status
+configure
+
+# Python (if any Python scripts are added)
+__pycache__/
+*.pyc
+*.pyo
+
+# Documentation build
+docs/_build/
+docs/html/
+docs/latex/
+
+# Local configuration
+local.conf
+*.local
+
+# Database files (if any test databases are created)
+*.db
+*.sqlite
+*.sqlite3 
