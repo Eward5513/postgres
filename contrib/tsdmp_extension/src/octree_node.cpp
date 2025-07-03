@@ -1,4 +1,4 @@
-#include "OctreeNode.h"
+#include "../include/octree_node.h"
 #include <iostream>
 #include <fstream>
 #include <stdexcept>

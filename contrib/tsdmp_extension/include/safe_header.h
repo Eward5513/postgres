@@ -26,6 +26,10 @@ extern "C" {
 #include "utils/errcodes.h"
 #include "nodes/makefuncs.h"
 #include "parser/parser.h"
+#include "storage/large_object.h"
+#include "libpq/be-fsstubs.h"
+#include "libpq/libpq-fs.h"
+#include "storage/fd.h"
 }
 
 // 在包含可能导致libintl.h包含的头文件之前，处理宏冲突

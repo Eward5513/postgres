@@ -1,4 +1,3 @@
-
 #ifndef OCTREE_NODE_MANAGER_H
 #define OCTREE_NODE_MANAGER_H
 
@@ -8,6 +7,8 @@
 
 class OctreeNodeManager {
 public:
+    static constexpr const char* TABLE_NAME = "all_octree_table";
+    
     static void clearTable();
 
     static void writeOctreeNodesToDatabase(int key, const std::vector<DBOctreeNode>& dbNodes);

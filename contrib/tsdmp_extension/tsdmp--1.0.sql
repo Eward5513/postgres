@@ -61,9 +61,19 @@ CREATE TABLE IF NOT EXISTS all_kdtree (
     PRIMARY KEY (key1, key2)
 );
 
--- 创建索引
-CREATE INDEX IF NOT EXISTS idx_all_octree_table_key ON all_octree_table(key);
-CREATE INDEX IF NOT EXISTS idx_all_kdtree_key1_key2 ON all_kdtree(key1, key2);
+-- 网格连接存储表 (用于存储二进制格式的连接数据)
+CREATE TABLE IF NOT EXISTS mesh_connections_table (
+    key INT PRIMARY KEY,
+    data BYTEA
+);
+
+-- 用户数据存储表 (用于存储大对象引用)
+CREATE TABLE IF NOT EXISTS user_data (
+    key INT PRIMARY KEY,
+    lo_oid OID,
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+);
 
 -- 函数声明
 

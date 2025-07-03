@@ -4,6 +4,8 @@
 #include <string>
 #include <vector>
 #include <cstddef>
+#include <unordered_map>
+#include "spatiotemporal_data.h"
 
 struct OctreeNode {
     Bounds bound;                              // Bounding box of the node

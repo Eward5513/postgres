@@ -5,8 +5,22 @@
 #include <unordered_map>
 #include "octree_node.h"
 
+struct DBKdtreeNode {
+    SpatioTemporalData point;                            
+    int id = -1;
+    int left_child = -1;
+    int right_child = -1;
+    uint8_t division_axis = -1;
+};
+
+bool check_kdtree(int id, std::vector<DBKdtreeNode> &kdnodes);
+
+std::vector<DBKdtreeNode> buildKdTree(std::vector<SpatioTemporalData>& points);
+
 class KdTreeNodeManager {
 public:
+    static constexpr const char* TABLE_NAME = "all_kdtree";
+    
     // 清空表数据，如果表不存在则创建
     static void clearTable();
 

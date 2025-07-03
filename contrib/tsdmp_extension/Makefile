@@ -5,13 +5,13 @@ OBJS = src/extension.o \
        src/main.o \
        src/data_loader.o \
        src/file_sorter.o \
-       src/spatiotemporal_data.o \
        src/octree_node.o \
        src/userdata_manager.o \
        src/kdtree_node_manager.o \
        src/octree_node_manager.o \
        src/mesh_connection_manager.o \
-       src/pgutils.o
+       src/pgutils.o \
+       src/spatiotemporal_data.o
 
 EXTENSION = tsdmp
 DATA = tsdmp--1.0.sql

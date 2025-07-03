@@ -6,7 +6,7 @@
 
 class UserDataManager {
 private:
-    static constexpr const char* TABLE_NAME = "data_user";
+    static constexpr const char* TABLE_NAME = "user_data";
 
 public:
     static void clearTable();
