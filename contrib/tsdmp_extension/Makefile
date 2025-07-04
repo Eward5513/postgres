@@ -11,7 +11,9 @@ OBJS = src/extension.o \
        src/octree_node_manager.o \
        src/mesh_connection_manager.o \
        src/pgutils.o \
-       src/spatiotemporal_data.o
+       src/spatiotemporal_data.o \
+       src/utils.o \
+       src/safe_logger.o
 
 EXTENSION = tsdmp
 DATA = tsdmp--1.0.sql

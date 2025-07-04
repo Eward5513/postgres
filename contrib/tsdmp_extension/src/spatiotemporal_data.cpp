@@ -1,4 +1,5 @@
 #include "../include/spatiotemporal_data.h"
+#include "../include/utils.h"
 #include <iostream>
 #include <cstring>
 #include <type_traits>
@@ -312,3 +313,45 @@ std::istream& operator>>(std::istream& is, SpatialBounds& bounds) {
     is >> bounds.max.x >> bounds.max.y >> bounds.max.z;
     return is;
 } 
+
+uint64_t indexOfPoint(float x, float y, float z, SpatialBounds bound, int level)
+{
+    uint64_t x_ = 0, y_ = 0, z_ = 0;
+    auto center = bound.getCenter();
+    for (auto i=level;i-- > 0;)
+    {
+        x_ <<= 1;
+        y_ <<= 1;
+        z_ <<= 1;
+        if (x < center.x)
+        {
+            bound.max.x = center.x;
+        }
+        else
+        {
+            bound.min.x = center.x;
+            x_ |= 1;
+        }
+        if (y < center.y)
+        {
+            bound.max.y = center.y;
+        }
+        else
+        {
+            bound.min.y = center.y;
+            y_ |= 1;
+        }
+        if (z < center.z)
+        {
+            bound.max.z = center.z;
+        }
+        else
+        {
+            bound.min.z = center.z;
+            z_ |= 1;
+        }
+        center = bound.getCenter();
+    }
+    uint64_t index = interleaveBits(x_, y_, z_,level);
+    return index;
+}

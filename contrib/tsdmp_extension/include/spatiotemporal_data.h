@@ -284,6 +284,8 @@ std::ostream& operator<<(std::ostream& os, const SpatialBounds& bounds);
 // 流入运算符 (输入) 的声明
 std::istream& operator>>(std::istream& is, SpatialBounds& bounds);
 
+uint64_t indexOfPoint(float x, float y, float z, SpatialBounds bound, int level);
+
 struct Bounds {
     SpatioTemporalData min;
     SpatioTemporalData max;
@@ -420,8 +422,6 @@ struct Bounds {
     friend std::istream& operator>>(std::istream& is, Bounds& bounds);
     friend std::ostream& operator<<(std::ostream& os, const Bounds& bounds);
 };
-
-
 
 
 #endif // SPATIOTEMPORAL_DATA_H 

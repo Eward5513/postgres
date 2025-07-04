@@ -21,6 +21,6 @@ typedef std::int16_t foreign_key_id_t;
 typedef float point_time_t;
 
 // Global variables
-extern std::uint64_t max_point_limit;
+inline int max_point_limit = 1e6;
 
 #endif // TSDMP_PARAMETER_H

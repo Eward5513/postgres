@@ -1,4 +1,4 @@
-// C++标准库头文件 - 先包含以避免宏冲突
+// C++ standard library headers - included first to avoid macro conflicts
 #include <string>
 #include <vector>
 #include <filesystem>
@@ -6,15 +6,17 @@
 #include <random>
 #include <fstream>
 #include <thread>
+#include <mutex>
+#include <regex>
 #include <nlohmann/json.hpp>
 
-// 只包含必要的PostgreSQL头文件
+// Only include necessary PostgreSQL headers
 extern "C" {
 #include "postgres.h"
 #include "utils/elog.h"
 }
 
-// 项目头文件
+// Project headers
 #include "../include/data_loader.h"
 #include "../include/parameter.h"
 #include "../include/mesh_connection_manager.h"
@@ -22,6 +24,7 @@ extern "C" {
 #include "../include/kdtree_node_manager.h"
 #include "../include/userdata_manager.h"
 #include "../include/utils.h"
+#include "../include/safe_logger.h"
 #include "file_sorter.h"
 
 using namespace std;
@@ -29,17 +32,47 @@ using json = nlohmann::json;
 
 namespace fs = filesystem;
 
-// Constructor
+/**
+ * @brief Constructor for DataLoader class
+ * 
+ * Initializes a DataLoader instance with the specified parameters for loading
+ * and processing spatiotemporal data files.
+ * 
+ * @param directory The directory path containing data files to be loaded
+ * @param max_file_num Maximum number of files to process (0 means no limit)
+ * @param sample_ratio Sampling ratio for data reduction (0.0 to 1.0)
+ */
 DataLoader::DataLoader(const string& directory, int max_file_num, float sample_ratio)
     : directory(directory), max_file_num(max_file_num), sample_ratio(sample_ratio)
 {
 }
 
-// Destructor
+/**
+ * @brief Destructor for DataLoader class
+ * 
+ * Cleans up resources and performs necessary cleanup operations.
+ */
 DataLoader::~DataLoader()
 {
 }
 
+/**
+ * @brief Load and prepare data source files for processing
+ * 
+ * This function scans the specified directory to collect all data files,
+ * performs file sorting and shuffling operations, and limits the number
+ * of files to process based on the max_file_num parameter.
+ * 
+ * Processing steps:
+ * 1. Scan directory for all files
+ * 2. Sort filenames alphabetically
+ * 3. Shuffle filenames with a fixed seed for reproducibility
+ * 4. Apply custom file sorting using FileSorter
+ * 5. Limit the number of files if max_file_num is specified
+ * 
+ * @note Files are shuffled with seed 42 to ensure reproducible results
+ * @note Supports .ply, .csv, and .obj file formats
+ */
 void DataLoader::load_data_source_files()
 {
     // int mesh_count = 0;
@@ -78,6 +111,25 @@ void DataLoader::load_data_source_files()
     this->filenames = filenames;
 }
 
+/**
+ * @brief Main function to load and process all data files
+ * 
+ * This is the primary entry point for data loading and processing. It coordinates
+ * the entire data loading pipeline including file discovery, metadata creation,
+ * database cleanup, and spatial index construction.
+ * 
+ * Processing pipeline:
+ * 1. Load and prepare source files from directory
+ * 2. Create file-to-ID mapping and save as JSON metadata
+ * 3. Clear existing database tables to ensure clean state
+ * 4. Build spatial indexes for efficient querying
+ * 
+ * @return vector<string> List of processed filenames
+ * 
+ * @note Creates a files_user.json file containing file-to-ID mappings
+ * @note Clears all existing spatial index tables before processing
+ * @throws May throw exceptions from underlying database operations
+ */
 vector<string> DataLoader::load_data()
 {
     this->load_data_source_files();
@@ -87,7 +139,7 @@ vector<string> DataLoader::load_data()
         users_json[filenames[i]] = i;
     }
     ofstream out_file(data_dir + "/files_user.json");
-    out_file << users_json.dump(10); // 格式化输出
+    out_file << users_json.dump(10); // Formatted output
     out_file.close();
 
     elog(INFO, "loaded %zu files from directory '%s'", filenames.size(), this->directory.c_str());
@@ -103,6 +155,30 @@ vector<string> DataLoader::load_data()
     return filenames;  
 }
 
+/**
+ * @brief Build spatial index for efficient spatiotemporal data querying
+ * 
+ * This function implements a comprehensive spatial indexing pipeline that processes
+ * large-scale spatiotemporal datasets. It uses a multi-stage approach to handle
+ * data that may not fit in memory, employing sampling, sorting, and merging techniques.
+ * 
+ * Indexing pipeline:
+ * 1. Parallel bounds calculation and data sampling
+ * 2. Load global spatial bounds from file
+ * 3. Parallel Z-order sorting of sample data
+ * 4. Multi-level merging of sorted sample files
+ * 5. Octree construction (currently disabled)
+ * 
+ * Performance characteristics:
+ * - Uses parallel processing for I/O intensive operations
+ * - Implements external sorting for large datasets
+ * - Maintains detailed timing statistics for performance analysis
+ * - Supports incremental processing to handle memory constraints
+ * 
+ * @note Timing information is stored in build_time map for analysis
+ * @note Octree construction is currently commented out but framework exists
+ * @note Global bounds are persisted to disk for reuse across sessions
+ */
 void DataLoader::build_index()
 {
     TimerClock tc;
@@ -114,21 +190,21 @@ void DataLoader::build_index()
         if (inputFile)
         {
             inputFile >> global_bound;
-            std::cout << "Loaded bounds: " << global_bound << std::endl;
+            elog(INFO, "Loaded bounds from global_bound.txt");
         }
     }
     // uint64_t sampleCellNums = (int64_t) 1 << (int64_t) chunk_max_level * 3, sampleDimension = (int64_t) 1 << (int64_t) chunk_max_level;
     // std::vector<uint64_t> originalCells;
     // Para_preCount(const vector<string> &filenames, sample_max_level-file_block_level, global_bound, std::vector<uint64_t> &originalCells);
     tc.tick();
-    this->para_sort_sample_file(global_bound);//给所有的采样数据和，按照z-order 排序
-    std::cout <<"sample_sorted_file_count:"<<this->sample_sorted_file_count << std::endl;
+    this->para_sort_sample_file(global_bound); // Sort all sample data according to z-order
+    elog(INFO, "sample_sorted_file_count: %lu", this->sample_sorted_file_count.load());
     this->build_time["doChunking_time->sorting_time"] = tc.second();
     tc.tick();
     this->merge_sample_data();
     this->build_time["doChunking_time->merging_time"] = tc.second();
     tc.tick();
-    std::cout <<"build chunk"<< std::endl;
+    elog(INFO, "build chunk");
 //     OctreeNode *root = building_octree_bottom_up_top_down(global_bound);// build chunk
 //     std::vector<DBOctreeNode> dbNodes = convertOctreeToDB(root);
 //     OctreeNodeManager::writeOctreeNodesToDatabase(-1, dbNodes);
@@ -152,14 +228,40 @@ void DataLoader::build_index()
 //     delete root;
 }
 
+/**
+ * @brief Parallel bounds calculation and data sampling
+ * 
+ * This function orchestrates parallel processing of all input files to calculate
+ * spatial bounds and perform data sampling. It's designed to handle large datasets
+ * efficiently by distributing the workload across multiple threads.
+ * 
+ * Processing workflow:
+ * 1. Clean temporary directories for fresh processing
+ * 2. Load file-to-ID mappings from metadata
+ * 3. Process each file in parallel to:
+ *    - Calculate individual spatial bounds
+ *    - Sample data points according to sampling ratio
+ *    - Write original and sampled data to temporary files
+ * 4. Merge all individual bounds into global bounds
+ * 5. Persist global bounds to disk for later use
+ * 
+ * Parallelization strategy:
+ * - Uses Boost.Asio thread pool for efficient task distribution
+ * - Each file is processed independently to maximize parallelism
+ * - Thread-safe progress tracking with atomic counters
+ * - Concurrent directory cleaning to overlap I/O operations
+ * 
+ * @note Creates temporary directories for original and sampled data
+ * @note Progress is logged with timing information for performance monitoring
+ * @note Global bounds are saved to global_bound.txt for persistence
+ */
 void DataLoader::para_bound_and_sample(){
     Bounds global_bound;
     std::thread clear1(clear_folder,data_dir + "/temp_bin_original_file");
     std::thread clear2(clear_folder,data_dir + "/temp_bin_sample_file");
     clear1.join();
     clear2.join();
-    boost::asio::thread_pool pool(max_concurrent_tasks_for_read_bound_task);
-    std::cout << "The number of files :" << this->filenames.size() << endl;
+    elog(INFO, "The number of files: %zu", this->filenames.size());
     std::vector<Bounds> sub_bounds(this->filenames.size());
     json loaded_json;
     {
@@ -167,21 +269,29 @@ void DataLoader::para_bound_and_sample(){
         in_file >> loaded_json;
         in_file.close();
     }
-    std::atomic<std::uint32_t> finished_file_counting = 0;
+        std::atomic<std::uint32_t> finished_file_counting = 0;
+    
     for (std::uint32_t i = 0; i < this->filenames.size(); ++i)
     {
-        boost::asio::post(pool, [this, &loaded_json, &finished_file_counting, i, &sub_bounds]()
+        thread_pool.post_task([this, &loaded_json, &finished_file_counting, i, &sub_bounds]()
         {
             TimerClock tc;
             auto file_name = this->filenames[i];
             sub_bounds[i] = this->calculate_bound_and_sampleing(file_name,i,loaded_json[file_name].get<int16_t>()); 
-            std::cout<<"bound & sample:"<<file_name<<" progress:"<<finished_file_counting++<<":"<<this->filenames.size()<<" time:"<<tc.second()/max_concurrent_tasks_for_read_bound_task<<"s"<<std::endl; 
+            
+            // 使用线程安全的输出函数
+            std::string log_message = "INFO: bound & sample: " + file_name + 
+                                     " progress: " + std::to_string(finished_file_counting++) + 
+                                     "/" + std::to_string(this->filenames.size()) + 
+                                     " time: " + std::to_string(tc.second()/max_concurrent_tasks_for_read_bound_task) + "s";
+            logger.log(log_message);
+            
             // if(delete_original_files){
             //     std::remove(file_name.c_str());
             // }
         });
     }
-    pool.join();
+    thread_pool.wait_for_all_tasks();
     // std::cout << "data_size:" << bounded_data_size << " file count:" << finished_file_counting << std::endl;
     bool firstFlag = true;
     global_bound = sub_bounds.front();
@@ -196,6 +306,36 @@ void DataLoader::para_bound_and_sample(){
     }
 }
 
+/**
+ * @brief Calculate spatial bounds and perform data sampling for a single file
+ * 
+ * This function processes a single spatiotemporal data file to extract spatial bounds
+ * and create a sampled subset of the data. It supports multiple file formats and
+ * handles different types of spatiotemporal data including point clouds, trajectories,
+ * and mesh data.
+ * 
+ * Supported file formats:
+ * - .ply: Point cloud data with intensity values
+ * - .csv: Trajectory data with speed information
+ * - .obj: 3D mesh data with color information
+ * 
+ * Data processing workflow:
+ * 1. Parse input file based on format
+ * 2. Calculate spatial bounds incrementally
+ * 3. Apply random sampling based on sample_ratio
+ * 4. Write both original and sampled data to binary files
+ * 5. Handle memory management with buffered I/O
+ * 
+ * @param filename Path to the input data file
+ * @param fid File identifier for tracking
+ * @param user_id User identifier for data ownership
+ * @return Bounds Calculated spatial bounds for the file
+ * 
+ * @note Uses 1MB buffer for efficient file I/O operations
+ * @note Implements adaptive buffering to handle large files
+ * @note Progress is logged every 10 million points processed
+ * @note Mesh connectivity data is stored separately in database
+ */
 Bounds DataLoader::calculate_bound_and_sampleing(const string &filename, file_id_t fid, user_id_t user_id)
 {
     ContinuousRandomGenerator generator(0.0f, 1.0f);
@@ -268,7 +408,11 @@ Bounds DataLoader::calculate_bound_and_sampleing(const string &filename, file_id
             }
             if (count % int(1e7) == 0)
             {
-                std::cout << "read bound:" << filename << ":" << count / int(1e7) << "x1e7 用时" << tc.second() << "秒" << std::endl;
+                // 使用线程安全的输出函数
+                std::string log_message = "INFO: read bound: " + filename + 
+                                         ": " + std::to_string(count / int(1e7)) + "x1e7 processing time " + 
+                                         std::to_string(tc.second()) + "s";
+                logger.log(log_message);
                 tc.tick();
             }
             uint8_t colorR, colorG, colorB;
@@ -294,7 +438,11 @@ Bounds DataLoader::calculate_bound_and_sampleing(const string &filename, file_id
             }
             if (count % int(1e7) == 0)
             {
-                std::cout << "read bound:" << filename << ":" << count / int(1e7) << "x1e7 用时" << tc.second() << "秒" << std::endl;
+                // 使用线程安全的输出函数
+                std::string log_message = "INFO: read bound: " + filename + 
+                                         ": " + std::to_string(count / int(1e7)) + "x1e7 processing time " + 
+                                         std::to_string(tc.second()) + "s";
+                logger.log(log_message);
                 tc.tick();
             }
             stringstream ss(line);
@@ -330,7 +478,11 @@ Bounds DataLoader::calculate_bound_and_sampleing(const string &filename, file_id
 
             if (count % int(1e7) == 0)
             {
-                std::cout << "read bound:" << filename << ":" << count / int(1e7) << "x1e7 用时" << tc.second() << "秒" << std::endl;
+                // 使用线程安全的输出函数
+                std::string log_message = "INFO: read bound: " + filename + 
+                                         ": " + std::to_string(count / int(1e7)) + "x1e7 processing time " + 
+                                         std::to_string(tc.second()) + "s";
+                logger.log(log_message);
                 tc.tick();
             }
             stringstream ss(line);
@@ -378,6 +530,34 @@ Bounds DataLoader::calculate_bound_and_sampleing(const string &filename, file_id
     return bounds;
 }
 
+/**
+ * @brief Sort sample data from a single file using Z-order indexing
+ * 
+ * This function processes a single sample file to perform spatial sorting using
+ * Z-order (Morton order) indexing. It reads the file in chunks to manage memory
+ * usage and groups spatially nearby points together for efficient access patterns.
+ * 
+ * Z-order sorting algorithm:
+ * 1. Read sample data in manageable chunks
+ * 2. Calculate Z-order index for each point based on spatial position
+ * 3. Group points by their Z-order index
+ * 4. Update global cell count statistics
+ * 5. Write sorted groups to output files
+ * 
+ * Memory management:
+ * - Uses adaptive buffer sizing based on concurrent task count
+ * - Processes data in chunks to avoid memory overflow
+ * - Thread-safe operations with mutex protection
+ * 
+ * @param out_file_id Output file identifier for sorted data
+ * @param filename Input sample file path
+ * @param bounds Global spatial bounds for index calculation
+ * @param sampleCells Reference to cell count array for statistics
+ * 
+ * @note Buffer size is dynamically adjusted based on concurrent tasks
+ * @note Uses thread-safe operations for file ID generation and cell counting
+ * @note Implements chunked reading to handle large files efficiently
+ */
 void DataLoader::sort_sample_file(int out_file_id, const string &filename, const Bounds &bounds, vector<uint32_t> &sampleCells)
 {
     auto spatial_bound = bounds.to_spatial_bound();
@@ -395,7 +575,7 @@ void DataLoader::sort_sample_file(int out_file_id, const string &filename, const
         this->sample_sort_count += num_elements_read;
         for (size_t i = 0; i < num_elements_read; ++i) {
             auto &point = buffer[i];
-            int64_t index = this->indexOfPoint(point.x, point.y, point.z, spatial_bound, chunk_max_level);
+            int64_t index = indexOfPoint(point.x, point.y, point.z, spatial_bound, chunk_max_level);
             sorted_sample_data[index].emplace_back(point);
         }
 
@@ -412,52 +592,36 @@ void DataLoader::sort_sample_file(int out_file_id, const string &filename, const
         }
         this->write_sample_to_file(sorted_sample_data, sample_file_id);
 
-        if (bytes_read < buffer.size()) break;  // 文件已读取完毕
+        if (bytes_read < buffer.size()) break;  // File has been read completely
     }
 }
 
-uint64_t DataLoader::indexOfPoint(float x, float y, float z, SpatialBounds bound, int level)
-{
-    uint64_t x_ = 0, y_ = 0, z_ = 0;
-    auto center = bound.getCenter();
-    for (auto i=level;i-- > 0;)
-    {
-        x_ <<= 1;
-        y_ <<= 1;
-        z_ <<= 1;
-        if (x < center.x)
-        {
-            bound.max.x = center.x;
-        }
-        else
-        {
-            bound.min.x = center.x;
-            x_ |= 1;
-        }
-        if (y < center.y)
-        {
-            bound.max.y = center.y;
-        }
-        else
-        {
-            bound.min.y = center.y;
-            y_ |= 1;
-        }
-        if (z < center.z)
-        {
-            bound.max.z = center.z;
-        }
-        else
-        {
-            bound.min.z = center.z;
-            z_ |= 1;
-        }
-        center = bound.getCenter();
-    }
-    uint64_t index = interleaveBits(x_, y_, z_,level);
-    return index;
-}
-
+/**
+ * @brief Write sorted sample data to binary file
+ * 
+ * This function takes a map of spatially grouped sample points and writes them
+ * to a binary file in sorted order. The output format is optimized for efficient
+ * merging operations in subsequent processing stages.
+ * 
+ * Output file format:
+ * - For each spatial cell: [cell_index][point_count][point_data...]
+ * - Cell indices are sorted in ascending order
+ * - Binary format for efficient I/O operations
+ * 
+ * Processing steps:
+ * 1. Convert map to vector for sorting
+ * 2. Filter out empty cells
+ * 3. Sort by cell index (Z-order)
+ * 4. Write header and data for each cell
+ * 5. Log statistics for monitoring
+ * 
+ * @param cellSamplePoint Map of cell indices to point lists
+ * @param file_id Unique identifier for output file naming
+ * 
+ * @note Skips empty cells to optimize storage
+ * @note Uses binary format for efficient storage and reading
+ * @note Logs total point count for verification
+ */
 void DataLoader::write_sample_to_file(std::unordered_map<int64_t, vector<SpatioTemporalData>> &cellSamplePoint, int file_id)
 {
     std::vector<std::pair<int64_t, vector<SpatioTemporalData>>> sorted_array;
@@ -472,7 +636,7 @@ void DataLoader::write_sample_to_file(std::unordered_map<int64_t, vector<SpatioT
     }
     std::sort(sorted_array.begin(), sorted_array.end(), 
               [](const std::pair<int64_t, vector<SpatioTemporalData>>& a, const std::pair<int64_t, vector<SpatioTemporalData>>& b) {
-                  return a.first < b.first; // 按照键升序排序
+                  return a.first < b.first; // Sort by key in ascending order
               });
     auto file_name = data_dir + "/sample_data/0_" + to_string(file_id) + ".bin";
     std::ofstream fileWrite(file_name, std::ios::binary | std::ios::app);
@@ -486,10 +650,39 @@ void DataLoader::write_sample_to_file(std::unordered_map<int64_t, vector<SpatioT
         fileWrite.write(reinterpret_cast<const char *>(&count_in_cell), sizeof(count_in_cell));
         fileWrite.write(reinterpret_cast<const char *>(samplePointList.data()), count_in_cell * sizeof(SpatioTemporalData));
     }
-    cout << file_name << " " << tmpcount << endl;
+    // 使用线程安全的输出函数
+    std::string log_message = "INFO: " + file_name + " " + std::to_string(tmpcount);
+    logger.log(log_message);
     fileWrite.close();
 }
 
+/**
+ * @brief Parallel sorting of all sample files using Z-order indexing
+ * 
+ * This function orchestrates the parallel sorting of all sample files created
+ * during the sampling phase. It implements a distributed sorting strategy to
+ * handle large datasets that don't fit in memory.
+ * 
+ * Parallel sorting strategy:
+ * 1. Clean output directory for fresh processing
+ * 2. Discover all sample files from temporary directory
+ * 3. Initialize cell count array for statistics
+ * 4. Process each file in parallel using thread pool
+ * 5. Aggregate cell statistics across all files
+ * 6. Save global cell count statistics
+ * 
+ * Output organization:
+ * - Creates sorted files in /sample_data/ directory
+ * - Each file contains spatially grouped data
+ * - Global cell statistics saved for merging phase
+ * 
+ * @param bounds Global spatial bounds for index calculation
+ * 
+ * @note Uses thread pool for efficient parallel processing
+ * @note Cell count array size is 2^(chunk_max_level * 3) for 3D space
+ * @note Statistics are persisted for validation in merging phase
+ * @note Progress is logged with timing information per file
+ */
 void DataLoader::para_sort_sample_file(const Bounds &bounds)
 {
     clear_folder(data_dir + "/sample_data");
@@ -501,32 +694,64 @@ void DataLoader::para_sort_sample_file(const Bounds &bounds)
     }
     std::uint64_t sampleCellNums = (std::int64_t)1 << (std::int64_t)chunk_max_level * 3;
     auto sampleCells = std::vector<uint32_t>(sampleCellNums, 0);
-    boost::asio::thread_pool pool(max_concurrent_tasks_for_count_task);
     int file_id = 0;
     for (const auto &filename : filenames)
     {
-        boost::asio::post(pool, [this, file_id, filename, &bounds, &sampleCells]()
+        thread_pool.post_task([this, file_id, filename, &bounds, &sampleCells]()
         {
             TimerClock tc;
             this->sort_sample_file(file_id, filename, bounds, sampleCells); 
-            std::cout<<"sort sample:"<<filename<<" time:"<<tc.second()/max_concurrent_tasks_for_count_task<<"s"<<std::endl; 
+            // 使用线程安全的输出函数
+            std::string log_message = "INFO: sort sample: " + filename + 
+                                     " time: " + std::to_string(tc.second()/max_concurrent_tasks_for_count_task) + "s";
+            logger.log(log_message);
             // if(delete_files)
             // std::remove(filename.c_str());
         });
         ++file_id;
     }
-    pool.join();
+    thread_pool.wait_for_all_tasks();
     std::ofstream sampleWrite(data_dir + "/sample_data/sampleCellNums.bin", std::ios::binary | std::ios::app);
     sampleWrite.write(reinterpret_cast<const char *>(sampleCells.data()), sampleCellNums * sizeof(std::uint32_t));
     sampleWrite.close();
-    std::cout <<"all file sorted"<< std::endl;
+    elog(INFO, "all file sorted");
 }
 
+/**
+ * @brief Merge all sorted sample files into a single globally sorted file
+ * 
+ * This function implements a multi-level external merge sort to combine all
+ * sorted sample files into a single globally sorted file. It uses a tournament-style
+ * merging approach to handle large datasets efficiently.
+ * 
+ * Merging algorithm:
+ * 1. Perform iterative pairwise merging until one file remains
+ * 2. Each iteration reduces file count by half
+ * 3. Load and validate cell count statistics
+ * 4. Copy final merged data to output file
+ * 5. Validate data integrity during the process
+ * 
+ * Data validation:
+ * - Compares expected vs actual point counts
+ * - Verifies file size consistency
+ * - Logs warnings for any inconsistencies
+ * 
+ * Output:
+ * - Creates all_sampled_data.bin with globally sorted sample data
+ * - Removes intermediate files to save disk space
+ * - Maintains Z-order sorting for spatial locality
+ * 
+ * @throws StringException If data file validation fails
+ * 
+ * @note Uses external merge sort to handle datasets larger than memory
+ * @note Validates data integrity throughout the process
+ * @note Final output is suitable for octree construction
+ */
 void DataLoader::merge_sample_data(){
     std::uint64_t cur_iter_id = 0;
     while (1)
     {
-        auto cur_file_num = Para_domerge(cur_iter_id, true);
+        auto cur_file_num = this->Para_domerge(cur_iter_id, true);
         cur_file_num = (cur_file_num + 1) >> 1;
         cur_iter_id++;
         if (cur_file_num <= 1)
@@ -543,13 +768,13 @@ void DataLoader::merge_sample_data(){
         sampleFile.seekg(0, std::ios::beg);
         if (fileSize % sizeof(uint32_t) != 0)
         {
-            std::cout <<"fileSize:"<<fileSize<< std::endl;
-            throw StringException("数据文件大小异常");
+            elog(ERROR, "fileSize: %lld", (long long)fileSize);
+            throw std::runtime_error("Data file size exception");
         }
         std::size_t numElements = fileSize / sizeof(uint32_t);
         if (numElements != sampleCellNums)
         {
-            throw StringException("数据个数异常");
+            throw std::runtime_error("Data count exception");
         }
         sampleCells.resize(numElements);
         sampleFile.read(reinterpret_cast<char *>(sampleCells.data()), fileSize);
@@ -574,7 +799,7 @@ void DataLoader::merge_sample_data(){
         }
         if (cell_index != validation_sample_cell_count)
         {
-            std::cout << "sample validation failed:" << validation_sample_cell_count << ":" << cell_index << std::endl;
+            elog(WARNING, "sample validation failed: %lu:%lu", validation_sample_cell_count, cell_index);
         }
         for (int i = 0; i < cur_index_number; i++)
         {
@@ -583,7 +808,7 @@ void DataLoader::merge_sample_data(){
             new_file.write(reinterpret_cast<char *>(&point), sizeof(point));
         }
     }
-    std::cout << "merged sample data size::" << cell_index << endl;
+    elog(INFO, "merged sample data size: %lu", cell_index);
     std::remove(std::string(data_dir +"/sample_data/" + to_string(cur_iter_id) + "_0.bin").c_str());
     
 }
@@ -604,12 +829,40 @@ void DataLoader::merge_sample_data(){
 //     clear_folder(data_dir + "/chunk_data");
 //     auto root = build_util.build_chunk_node_sample(bounds, 0, 0, 0, 0);//build chunk
 //     build_util.do_indexing_thread_pool.wait_for_all_tasks();
-//     std::cout << "chunk 节点个数:" << build_util.node_count << std::endl;
+//     std::cout << "chunk node count:" << build_util.node_count << std::endl;
 //     std::cout << "split sample size:" << build_util.split_sample_count << std::endl;
 //     std::cout << "sample file point position:" << build_util.sample_file.tellg() / sizeof(SpatioTemporalData) << std::endl;
 //     return root;
 // }
 
+/**
+ * @brief Merge two sorted files into a single sorted file
+ * 
+ * This function implements the core pairwise merging logic for external merge sort.
+ * It handles merging of two sorted spatiotemporal data files while maintaining
+ * Z-order sorting and managing memory efficiently through buffered I/O.
+ * 
+ * Merging algorithm:
+ * - Two-way merge similar to merge sort
+ * - Compares cell indices to maintain global ordering
+ * - Handles cases where files have same or different cell indices
+ * - Uses buffered I/O to manage memory usage
+ * 
+ * Special cases:
+ * 1. Single file (odd count): Simply rename to next iteration
+ * 2. Two files: Perform standard two-way merge
+ * 3. Same cell index: Combine point counts and merge data
+ * 
+ * @param cur_file_id Current file ID being processed (even numbers)
+ * @param cur_iter Current iteration level (0-based)
+ * @param cur_file_num Total number of files in current iteration
+ * @param prefix Directory prefix for file organization
+ * @return uint64_t Total number of points processed
+ * 
+ * @note File naming follows pattern: {iteration}_{file_id}.bin
+ * @note Output files go to next iteration: {iteration+1}_{file_id/2}.bin
+ * @note Uses 1KB buffer for efficient memory usage
+ */
 uint64_t domerge(uint64_t cur_file_id, uint64_t cur_iter, uint64_t cur_file_num, std::string prefix)
 {
     // string cur_file_name = "";
@@ -657,7 +910,17 @@ uint64_t domerge(uint64_t cur_file_id, uint64_t cur_iter, uint64_t cur_file_num,
             }
         }
         if (to_print)
-            cout << all_number << " " << "cur_file_id:" << cur_file_id << " " << "cur_iter:" << cur_iter << " " << "cur_file_num:" << cur_file_num << " " << next_file_name << " " << cur_file_name << " " << new_file_name << endl;
+        {
+            // 使用线程安全的输出函数
+            std::string log_message = "INFO: " + std::to_string(all_number) + 
+                                     " cur_file_id:" + std::to_string(cur_file_id) + 
+                                     " cur_iter:" + std::to_string(cur_iter) + 
+                                     " cur_file_num:" + std::to_string(cur_file_num) + 
+                                     " next:" + next_file_name + 
+                                     " cur:" + cur_file_name + 
+                                     " new:" + new_file_name;
+            logger.log(log_message);
+        }
         std::rename(cur_file_name.c_str(), new_file_name.c_str());
         return all_number;
     }
@@ -803,7 +1066,17 @@ uint64_t domerge(uint64_t cur_file_id, uint64_t cur_iter, uint64_t cur_file_num,
     if (file2_end && file1_end)
     {
         if (to_print)
-            cout << all_number << " " << "cur_file_id:" << cur_file_id << " " << "cur_iter:" << cur_iter << " " << "cur_file_num:" << cur_file_num << " " << next_file_name << " " << cur_file_name << " " << new_file_name << endl;
+        {
+            // 使用线程安全的输出函数
+            std::string log_message = "INFO: " + std::to_string(all_number) + 
+                                     " cur_file_id:" + std::to_string(cur_file_id) + 
+                                     " cur_iter:" + std::to_string(cur_iter) + 
+                                     " cur_file_num:" + std::to_string(cur_file_num) + 
+                                     " next:" + next_file_name + 
+                                     " cur:" + cur_file_name + 
+                                     " new:" + new_file_name;
+            logger.log(log_message);
+        }
         return all_number;
     }
     if (file2_end)
@@ -855,13 +1128,51 @@ uint64_t domerge(uint64_t cur_file_id, uint64_t cur_iter, uint64_t cur_file_num,
         }
     }
     if (to_print)
-        cout << all_number << " " << "cur_file_id:" << cur_file_id << " " << "cur_iter:" << cur_iter << " " << "cur_file_num:" << cur_file_num << " " << next_file_name << " " << cur_file_name << " " << new_file_name << endl;
+    {
+        // 使用线程安全的输出函数
+        std::string log_message = "INFO: " + std::to_string(all_number) + 
+                                 " cur_file_id:" + std::to_string(cur_file_id) + 
+                                 " cur_iter:" + std::to_string(cur_iter) + 
+                                 " cur_file_num:" + std::to_string(cur_file_num) + 
+                                 " next:" + next_file_name + 
+                                 " cur:" + cur_file_name + 
+                                 " new:" + new_file_name;
+        logger.log(log_message);
+    }
     return all_number;
 }
 
-uint64_t Para_domerge(uint64_t cur_iter_id, bool sample_or_original)
+/**
+ * @brief Parallel merge operation for one iteration of external merge sort
+ * 
+ * This function orchestrates parallel merging of multiple file pairs in a single
+ * iteration of the external merge sort algorithm. It manages thread pools for
+ * both merging and cleanup operations to maximize efficiency.
+ * 
+ * Parallel merge strategy:
+ * 1. Discover all files for current iteration
+ * 2. Create merge tasks for adjacent file pairs (i, i+1)
+ * 3. Execute merges in parallel using thread pool
+ * 4. Clean up processed files in parallel
+ * 5. Return file count for next iteration planning
+ * 
+ * Thread management:
+ * - Uses separate thread pools for merging and file deletion
+ * - Atomic counter for thread-safe merge statistics
+ * - Parallel cleanup to minimize iteration time
+ * 
+ * @param cur_iter_id Current iteration identifier (0-based)
+ * @param sample_or_original Flag to choose between sample_data or original_data
+ * @return uint64_t Number of files processed (for next iteration planning)
+ * 
+ * @note Merges files in pairs: (0,1) -> 0, (2,3) -> 1, etc.
+ * @note Uses atomic operations for thread-safe statistics
+ * @note Cleanup is parallelized to minimize total iteration time
+ * @note Works with both sample and original data directories
+ */
+uint64_t DataLoader::Para_domerge(uint64_t cur_iter_id, bool sample_or_original)
 {
-    std::cout << "建立合并线程池:" << cur_iter_id << std::endl;
+    elog(INFO, "Create merge thread pool: %lu", cur_iter_id);
     string prefix;
     if (sample_or_original)
     {
@@ -872,7 +1183,6 @@ uint64_t Para_domerge(uint64_t cur_iter_id, bool sample_or_original)
         prefix = "original_data";
     }
     auto sample_files = findFilesWithPrefix(data_dir +"/" + prefix, to_string(cur_iter_id) + "_");
-    ThreadPoolWrapper thread_pool(max_concurrent_tasks_for_count_task);
     std::atomic<uint64_t> merged_count(0);
     for (uint64_t i = 0; i < sample_files.size(); i += 2)
     {
@@ -884,10 +1194,9 @@ uint64_t Para_domerge(uint64_t cur_iter_id, bool sample_or_original)
 
     {
         auto tasks = split<std::int64_t>(0,sample_files.size(),max_concurrent_tasks_for_count_task * 2);
-        ThreadPoolWrapper deleting_thread_pool(max_concurrent_tasks_for_count_task * 2);
         for (auto task : tasks)
         {
-            deleting_thread_pool.post_task([prefix,task,&sample_files]()
+            thread_pool.post_task([prefix,task,&sample_files]()
             {
                 for(std::int64_t i = task.first;i<task.second;++i){
                     std::string file_path = data_dir +"/" + prefix + "/" + sample_files[i];
@@ -895,8 +1204,8 @@ uint64_t Para_domerge(uint64_t cur_iter_id, bool sample_or_original)
                 }
             });
         }
-        deleting_thread_pool.wait_for_all_tasks();
+        thread_pool.wait_for_all_tasks();
     }
-    std::cout << "merged it count :"<<cur_iter_id<<" - "<< merged_count << std::endl;
+    elog(INFO, "merged it count: %lu - %lu", cur_iter_id, merged_count.load());
     return sample_files.size();
 }

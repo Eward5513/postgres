@@ -23,9 +23,9 @@ class DataLoader{
     void para_bound_and_sample();
     void para_sort_sample_file(const Bounds& bounds);
     void merge_sample_data();
+    uint64_t Para_domerge(uint64_t cur_iter_id, bool sample_or_original);
     Bounds calculate_bound_and_sampleing(const std::string& filename, int32_t fid, int16_t user_id);
     void sort_sample_file(int out_file_id, const std::string& filename, const Bounds& bounds, std::vector<uint32_t>& sampleCells);
-    uint64_t indexOfPoint(float x, float y, float z, struct SpatialBounds bound, int level);
     void write_sample_to_file(std::unordered_map<int64_t, std::vector<struct SpatioTemporalData>>& cellSamplePoint, int file_id);
     
     // Member variables
