@@ -347,6 +347,26 @@ Bounds DataLoader::calculate_bound_and_sampleing(const string &filename, file_id
     unsigned int pid = 0;
     ofstream outfile(data_dir + "/temp_bin_original_file/" + std::to_string(fid) + ".bin", std::ios::binary);
     ofstream sample_outfile(data_dir + "/temp_bin_sample_file/" + std::to_string(fid) + ".bin", std::ios::binary);
+    
+    // Check if file streams are successfully created and add logging
+    if (!outfile.is_open()) {
+        elog(ERROR, "Failed to create original data file: %s/temp_bin_original_file/%d.bin", 
+             data_dir.c_str(), fid);
+        throw std::runtime_error("Cannot create original data output file");
+    } else {
+        elog(INFO, "Successfully created original data file: %s/temp_bin_original_file/%d.bin", 
+             data_dir.c_str(), fid);
+    }
+    
+    if (!sample_outfile.is_open()) {
+        elog(ERROR, "Failed to create sample data file: %s/temp_bin_sample_file/%d.bin", 
+             data_dir.c_str(), fid);
+        throw std::runtime_error("Cannot create sample data output file");
+    } else {
+        elog(INFO, "Successfully created sample data file: %s/temp_bin_sample_file/%d.bin", 
+             data_dir.c_str(), fid);
+    }
+    
     std::vector<SpatioTemporalData> buffer;
     std::vector<SpatioTemporalData> sample_buffer;
     auto do_point = [&](SpatioTemporalData &point)
@@ -698,7 +718,8 @@ void DataLoader::write_sample_to_file(std::unordered_map<int64_t, vector<SpatioT
  */
 void DataLoader::para_sort_sample_file(const Bounds &bounds)
 {
-    clear_folder(data_dir + "/sample_data");
+    std::string sample_dir = data_dir+"/sample_data";
+    clear_folder(sample_dir);
     std::vector<std::string> filenames;
     for (const auto &entry : fs::directory_iterator(data_dir + "/temp_bin_sample_file"))
     {
@@ -720,7 +741,7 @@ void DataLoader::para_sort_sample_file(const Bounds &bounds)
         // std::remove(filename.c_str());
         ++file_id;
     }
-    std::ofstream sampleWrite(data_dir + "/sample_data/sampleCellNums.bin", std::ios::binary | std::ios::app);
+    std::ofstream sampleWrite(sample_dir + "/sampleCellNums.bin", std::ios::binary | std::ios::app);
     sampleWrite.write(reinterpret_cast<const char *>(sampleCells.data()), sampleCellNums * sizeof(std::uint32_t));
     sampleWrite.close();
     elog(INFO, "all file sorted");

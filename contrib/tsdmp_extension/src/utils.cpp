@@ -19,24 +19,29 @@ float ContinuousRandomGenerator::generate() {
 bool clear_folder(std::string folderPath) {
     std::cout << "Clear folder: " << folderPath << std::endl;
 
-    if (!fs::exists(folderPath)) {
-        std::cerr << "Error: Folder does not exist: " << folderPath << std::endl;
-        return false;
-    }
-
     try {
-        // 直接清理文件，避免嵌套线程池
+        // 如果目录不存在，创建它
+        if (!fs::exists(folderPath)) {
+            std::cout << "Creating directory: " << folderPath << std::endl;
+            fs::create_directories(folderPath);
+            std::cout << "Successfully created directory: " << folderPath << std::endl;
+            return true;
+        }
+
+        // 如果目录存在，清理其内容
         for (const auto& entry : fs::directory_iterator(folderPath)) {
             try {
                 fs::remove_all(entry.path());
+                std::cout << "Removed: " << entry.path() << std::endl;
             } catch (const std::exception& e) {
                 std::cerr << "Error removing: " << entry.path() << " - " << e.what() << std::endl;
             }
         }
-        std::cout << "Cleared folder" << std::endl;
+        std::cout << "Successfully cleared folder: " << folderPath << std::endl;
         return true;
+        
     } catch (const std::exception& e) {
-        std::cerr << "Error clearing folder: " << e.what() << std::endl;
+        std::cerr << "Error processing folder " << folderPath << ": " << e.what() << std::endl;
         return false;
     }
 }
