@@ -842,3 +842,504 @@ DualKeyBinarySelectResult* PostgreSQLUtils::executeBinarySelectAllDualKey(const 
     
     return result;
 } 
+
+// Dual key large object operations
+
+void PostgreSQLUtils::executeLargeObjectInsertDualKey(const char* table_name, int key1_value, int key2_value,
+                                                     const void* binary_data, size_t binary_size) {
+    std::lock_guard<std::mutex> lock(spi_mutex_);
+    
+    if (SPI_connect() != SPI_OK_CONNECT) {
+        ereport(ERROR, (errcode(ERRCODE_INTERNAL_ERROR),
+                       errmsg("could not connect to SPI")));
+    }
+    
+    // Create large object
+    Oid lo_oid = inv_create(INV_READ | INV_WRITE);
+    if (lo_oid == InvalidOid) {
+        SPI_finish();
+        ereport(ERROR, (errcode(ERRCODE_INTERNAL_ERROR),
+                       errmsg("lo_creat failed")));
+    }
+    
+    // Open large object
+    LargeObjectDesc *lobj_desc = inv_open(lo_oid, INV_WRITE, CurrentMemoryContext);
+    if (lobj_desc == NULL) {
+        inv_drop(lo_oid);
+        SPI_finish();
+        ereport(ERROR, (errcode(ERRCODE_INTERNAL_ERROR),
+                       errmsg("lo_open failed")));
+    }
+    
+    // Write data
+    int nbytes = inv_write(lobj_desc, (char*)binary_data, binary_size);
+    if (nbytes != binary_size) {
+        inv_close(lobj_desc);
+        inv_drop(lo_oid);
+        SPI_finish();
+        ereport(ERROR, (errcode(ERRCODE_INTERNAL_ERROR),
+                       errmsg("lo_write failed")));
+    }
+    
+    // Close large object
+    inv_close(lobj_desc);
+    
+    // Insert record
+    StringInfoData sql_buf;
+    initStringInfo(&sql_buf);
+    appendStringInfo(&sql_buf, "INSERT INTO %s (key1, key2, lo_oid) VALUES ($1, $2, $3)", table_name);
+    
+    // Prepare parameters
+    Oid argtypes[3] = {INT4OID, INT4OID, OIDOID};
+    Datum values[3];
+    char nulls[3] = {' ', ' ', ' '};
+    
+    values[0] = Int32GetDatum(key1_value);
+    values[1] = Int32GetDatum(key2_value);
+    values[2] = ObjectIdGetDatum(lo_oid);
+    
+    // Prepare and execute plan
+    SPIPlanPtr plan = SPI_prepare(sql_buf.data, 3, argtypes);
+    if (plan == NULL) {
+        inv_drop(lo_oid);
+        pfree(sql_buf.data);
+        SPI_finish();
+        ereport(ERROR, (errcode(ERRCODE_INTERNAL_ERROR),
+                       errmsg("SPI_prepare failed")));
+    }
+    
+    int ret = SPI_execute_plan(plan, values, nulls, false, 0);
+    if (ret != SPI_OK_INSERT) {
+        inv_drop(lo_oid);
+        SPI_freeplan(plan);
+        pfree(sql_buf.data);
+        SPI_finish();
+        ereport(ERROR, (errcode(ERRCODE_INTERNAL_ERROR),
+                       errmsg("SPI_execute_plan failed for INSERT")));
+    }
+    
+    SPI_freeplan(plan);
+    pfree(sql_buf.data);
+    SPI_finish();
+}
+
+void PostgreSQLUtils::executeLargeObjectUpdateDualKey(const char* table_name, int key1_value, int key2_value,
+                                                     const void* binary_data, size_t binary_size) {
+    std::lock_guard<std::mutex> lock(spi_mutex_);
+    
+    if (SPI_connect() != SPI_OK_CONNECT) {
+        ereport(ERROR, (errcode(ERRCODE_INTERNAL_ERROR),
+                       errmsg("could not connect to SPI")));
+    }
+    
+    // First get existing OID
+    StringInfoData select_sql_buf;
+    initStringInfo(&select_sql_buf);
+    appendStringInfo(&select_sql_buf, "SELECT lo_oid FROM %s WHERE key1 = $1 AND key2 = $2", table_name);
+    
+    Oid select_argtypes[2] = {INT4OID, INT4OID};
+    Datum select_values[2];
+    char select_nulls[2] = {' ', ' '};
+    
+    select_values[0] = Int32GetDatum(key1_value);
+    select_values[1] = Int32GetDatum(key2_value);
+    
+    SPIPlanPtr select_plan = SPI_prepare(select_sql_buf.data, 2, select_argtypes);
+    if (select_plan == NULL) {
+        pfree(select_sql_buf.data);
+        SPI_finish();
+        ereport(ERROR, (errcode(ERRCODE_INTERNAL_ERROR),
+                       errmsg("SPI_prepare failed for SELECT")));
+    }
+    
+    int ret = SPI_execute_plan(select_plan, select_values, select_nulls, true, 0);
+    if (ret != SPI_OK_SELECT) {
+        SPI_freeplan(select_plan);
+        pfree(select_sql_buf.data);
+        SPI_finish();
+        ereport(ERROR, (errcode(ERRCODE_INTERNAL_ERROR),
+                       errmsg("SPI_execute_plan failed for SELECT")));
+    }
+    
+    Oid lo_oid;
+    if (SPI_processed > 0) {
+        // Get existing OID
+        HeapTuple tuple = SPI_tuptable->vals[0];
+        bool isnull;
+        Datum datum = SPI_getbinval(tuple, SPI_tuptable->tupdesc, 1, &isnull);
+        lo_oid = DatumGetObjectId(datum);
+    } else {
+        // Create new OID if record doesn't exist
+        lo_oid = inv_create(INV_READ | INV_WRITE);
+        if (lo_oid == InvalidOid) {
+            SPI_freeplan(select_plan);
+            pfree(select_sql_buf.data);
+            SPI_finish();
+            ereport(ERROR, (errcode(ERRCODE_INTERNAL_ERROR),
+                           errmsg("lo_creat failed")));
+        }
+    }
+    
+    SPI_freeplan(select_plan);
+    pfree(select_sql_buf.data);
+    
+    // Update large object data
+    LargeObjectDesc *lobj_desc = inv_open(lo_oid, INV_WRITE, CurrentMemoryContext);
+    if (lobj_desc == NULL) {
+        SPI_finish();
+        ereport(ERROR, (errcode(ERRCODE_INTERNAL_ERROR),
+                       errmsg("lo_open failed")));
+    }
+    
+    // Truncate and write new data
+    inv_truncate(lobj_desc, 0);
+    int nbytes = inv_write(lobj_desc, (char*)binary_data, binary_size);
+    if (nbytes != binary_size) {
+        inv_close(lobj_desc);
+        SPI_finish();
+        ereport(ERROR, (errcode(ERRCODE_INTERNAL_ERROR),
+                       errmsg("lo_write failed")));
+    }
+    
+    inv_close(lobj_desc);
+    
+    // Insert or update record
+    if (SPI_processed == 0) {
+        // Insert new record
+        StringInfoData insert_sql_buf;
+        initStringInfo(&insert_sql_buf);
+        appendStringInfo(&insert_sql_buf, "INSERT INTO %s (key1, key2, lo_oid) VALUES ($1, $2, $3)", table_name);
+        
+        Oid insert_argtypes[3] = {INT4OID, INT4OID, OIDOID};
+        Datum insert_values[3];
+        char insert_nulls[3] = {' ', ' ', ' '};
+        
+        insert_values[0] = Int32GetDatum(key1_value);
+        insert_values[1] = Int32GetDatum(key2_value);
+        insert_values[2] = ObjectIdGetDatum(lo_oid);
+        
+        SPIPlanPtr insert_plan = SPI_prepare(insert_sql_buf.data, 3, insert_argtypes);
+        if (insert_plan == NULL) {
+            pfree(insert_sql_buf.data);
+            SPI_finish();
+            ereport(ERROR, (errcode(ERRCODE_INTERNAL_ERROR),
+                           errmsg("SPI_prepare failed for INSERT")));
+        }
+        
+        ret = SPI_execute_plan(insert_plan, insert_values, insert_nulls, false, 0);
+        if (ret != SPI_OK_INSERT) {
+            SPI_freeplan(insert_plan);
+            pfree(insert_sql_buf.data);
+            SPI_finish();
+            ereport(ERROR, (errcode(ERRCODE_INTERNAL_ERROR),
+                           errmsg("SPI_execute_plan failed for INSERT")));
+        }
+        
+        SPI_freeplan(insert_plan);
+        pfree(insert_sql_buf.data);
+    }
+    
+    SPI_finish();
+}
+
+LargeObjectSelectResult* PostgreSQLUtils::executeLargeObjectSelectByDualKey(const char* table_name, int key1_value, int key2_value) {
+    std::lock_guard<std::mutex> lock(spi_mutex_);
+    
+    if (SPI_connect() != SPI_OK_CONNECT) {
+        ereport(ERROR, (errcode(ERRCODE_INTERNAL_ERROR),
+                       errmsg("could not connect to SPI")));
+    }
+    
+    // Build SELECT statement
+    StringInfoData sql_buf;
+    initStringInfo(&sql_buf);
+    appendStringInfo(&sql_buf, "SELECT lo_oid FROM %s WHERE key1 = $1 AND key2 = $2", table_name);
+    
+    // Prepare parameters
+    Oid argtypes[2] = {INT4OID, INT4OID};
+    Datum values[2];
+    char nulls[2] = {' ', ' '};
+    
+    values[0] = Int32GetDatum(key1_value);
+    values[1] = Int32GetDatum(key2_value);
+    
+    // Prepare and execute plan
+    SPIPlanPtr plan = SPI_prepare(sql_buf.data, 2, argtypes);
+    if (plan == NULL) {
+        pfree(sql_buf.data);
+        SPI_finish();
+        ereport(ERROR, (errcode(ERRCODE_INTERNAL_ERROR),
+                       errmsg("SPI_prepare failed")));
+    }
+    
+    int ret = SPI_execute_plan(plan, values, nulls, true, 0);
+    if (ret != SPI_OK_SELECT) {
+        SPI_freeplan(plan);
+        pfree(sql_buf.data);
+        SPI_finish();
+        ereport(ERROR, (errcode(ERRCODE_INTERNAL_ERROR),
+                       errmsg("SPI_execute_plan failed for SELECT")));
+    }
+    
+    LargeObjectSelectResult* result = NULL;
+    
+    if (SPI_processed > 0) {
+        result = (LargeObjectSelectResult*) SPI_palloc(sizeof(LargeObjectSelectResult));
+        result->count = SPI_processed;
+        result->data_array = (void**) SPI_palloc(result->count * sizeof(void*));
+        result->size_array = (size_t*) SPI_palloc(result->count * sizeof(size_t));
+        
+        // Read data for each large object
+        for (int i = 0; i < result->count; i++) {
+            HeapTuple tuple = SPI_tuptable->vals[i];
+            bool isnull;
+            Datum datum = SPI_getbinval(tuple, SPI_tuptable->tupdesc, 1, &isnull);
+            
+            if (!isnull) {
+                Oid lo_oid = DatumGetObjectId(datum);
+                
+                // Open large object
+                LargeObjectDesc *lobj_desc = inv_open(lo_oid, INV_READ, CurrentMemoryContext);
+                if (lobj_desc == NULL) {
+                    SPI_freeplan(plan);
+                    pfree(sql_buf.data);
+                    SPI_finish();
+                    ereport(ERROR, (errcode(ERRCODE_INTERNAL_ERROR),
+                                   errmsg("lo_open failed for OID %u", lo_oid)));
+                }
+                
+                // Get large object size
+                int64 lo_size = inv_seek(lobj_desc, 0, SEEK_END);
+                inv_seek(lobj_desc, 0, SEEK_SET);
+                
+                if (lo_size < 0) {
+                    inv_close(lobj_desc);
+                    SPI_freeplan(plan);
+                    pfree(sql_buf.data);
+                    SPI_finish();
+                    ereport(ERROR, (errcode(ERRCODE_INTERNAL_ERROR),
+                                   errmsg("lo_lseek64 failed for OID %u", lo_oid)));
+                }
+                
+                // Allocate memory and read data
+                result->size_array[i] = lo_size;
+                result->data_array[i] = SPI_palloc(lo_size);
+                
+                int nbytes = inv_read(lobj_desc, (char*)result->data_array[i], lo_size);
+                if (nbytes != lo_size) {
+                    inv_close(lobj_desc);
+                    SPI_freeplan(plan);
+                    pfree(sql_buf.data);
+                    SPI_finish();
+                    ereport(ERROR, (errcode(ERRCODE_INTERNAL_ERROR),
+                                   errmsg("lo_read failed for OID %u", lo_oid)));
+                }
+                
+                inv_close(lobj_desc);
+            } else {
+                result->data_array[i] = NULL;
+                result->size_array[i] = 0;
+            }
+        }
+    }
+    
+    SPI_freeplan(plan);
+    pfree(sql_buf.data);
+    SPI_finish();
+    
+    return result;
+}
+
+DualKeyBinarySelectResult* PostgreSQLUtils::executeLargeObjectSelectByKey1(const char* table_name, int key1_value) {
+    std::lock_guard<std::mutex> lock(spi_mutex_);
+    
+    if (SPI_connect() != SPI_OK_CONNECT) {
+        ereport(ERROR, (errcode(ERRCODE_INTERNAL_ERROR),
+                       errmsg("could not connect to SPI")));
+    }
+    
+    // Build SELECT statement
+    StringInfoData sql_buf;
+    initStringInfo(&sql_buf);
+    appendStringInfo(&sql_buf, "SELECT key2, lo_oid FROM %s WHERE key1 = $1", table_name);
+    
+    // Prepare parameters
+    Oid argtypes[1] = {INT4OID};
+    Datum values[1];
+    char nulls[1] = {' '};
+    
+    values[0] = Int32GetDatum(key1_value);
+    
+    // Prepare and execute plan
+    SPIPlanPtr plan = SPI_prepare(sql_buf.data, 1, argtypes);
+    if (plan == NULL) {
+        pfree(sql_buf.data);
+        SPI_finish();
+        ereport(ERROR, (errcode(ERRCODE_INTERNAL_ERROR),
+                       errmsg("SPI_prepare failed")));
+    }
+    
+    int ret = SPI_execute_plan(plan, values, nulls, true, 0);
+    if (ret != SPI_OK_SELECT) {
+        SPI_freeplan(plan);
+        pfree(sql_buf.data);
+        SPI_finish();
+        ereport(ERROR, (errcode(ERRCODE_INTERNAL_ERROR),
+                       errmsg("SPI_execute_plan failed for SELECT")));
+    }
+    
+    DualKeyBinarySelectResult* result = NULL;
+    
+    if (SPI_processed > 0) {
+        result = (DualKeyBinarySelectResult*) SPI_palloc(sizeof(DualKeyBinarySelectResult));
+        result->count = SPI_processed;
+        
+        result->key1_array = (int*) SPI_palloc(result->count * sizeof(int));
+        result->key2_array = (int*) SPI_palloc(result->count * sizeof(int));
+        result->data_array = (void**) SPI_palloc(result->count * sizeof(void*));
+        result->size_array = (size_t*) SPI_palloc(result->count * sizeof(size_t));
+        
+        TupleDesc tupdesc = SPI_tuptable->tupdesc;
+        
+        for (int i = 0; i < result->count; i++) {
+            HeapTuple tuple = SPI_tuptable->vals[i];
+            
+            // Get key2 value
+            bool isnull;
+            Datum key2_datum = SPI_getbinval(tuple, tupdesc, 1, &isnull);
+            result->key1_array[i] = key1_value;
+            result->key2_array[i] = DatumGetInt32(key2_datum);
+            
+            // Get large object data
+            Datum lo_oid_datum = SPI_getbinval(tuple, tupdesc, 2, &isnull);
+            if (!isnull) {
+                Oid lo_oid = DatumGetObjectId(lo_oid_datum);
+                
+                // Open large object
+                LargeObjectDesc *lobj_desc = inv_open(lo_oid, INV_READ, CurrentMemoryContext);
+                if (lobj_desc != NULL) {
+                    // Get large object size
+                    int64 lo_size = inv_seek(lobj_desc, 0, SEEK_END);
+                    inv_seek(lobj_desc, 0, SEEK_SET);
+                    
+                    if (lo_size >= 0) {
+                        result->size_array[i] = lo_size;
+                        result->data_array[i] = SPI_palloc(lo_size);
+                        
+                        int nbytes = inv_read(lobj_desc, (char*)result->data_array[i], lo_size);
+                        if (nbytes != lo_size) {
+                            result->data_array[i] = NULL;
+                            result->size_array[i] = 0;
+                        }
+                    } else {
+                        result->data_array[i] = NULL;
+                        result->size_array[i] = 0;
+                    }
+                    
+                    inv_close(lobj_desc);
+                } else {
+                    result->data_array[i] = NULL;
+                    result->size_array[i] = 0;
+                }
+            } else {
+                result->data_array[i] = NULL;
+                result->size_array[i] = 0;
+            }
+        }
+    }
+    
+    SPI_freeplan(plan);
+    pfree(sql_buf.data);
+    SPI_finish();
+    
+    return result;
+}
+
+DualKeyBinarySelectResult* PostgreSQLUtils::executeLargeObjectSelectAllDualKey(const char* table_name) {
+    std::lock_guard<std::mutex> lock(spi_mutex_);
+    
+    if (SPI_connect() != SPI_OK_CONNECT) {
+        ereport(ERROR, (errcode(ERRCODE_INTERNAL_ERROR),
+                       errmsg("could not connect to SPI")));
+    }
+    
+    // Build SELECT statement
+    StringInfoData sql_buf;
+    initStringInfo(&sql_buf);
+    appendStringInfo(&sql_buf, "SELECT key1, key2, lo_oid FROM %s", table_name);
+    
+    int ret = SPI_exec(sql_buf.data, 0);
+    if (ret != SPI_OK_SELECT) {
+        pfree(sql_buf.data);
+        SPI_finish();
+        ereport(ERROR, (errcode(ERRCODE_INTERNAL_ERROR),
+                       errmsg("SPI_exec failed for SELECT ALL")));
+    }
+    
+    DualKeyBinarySelectResult* result = NULL;
+    
+    if (SPI_processed > 0) {
+        result = (DualKeyBinarySelectResult*) SPI_palloc(sizeof(DualKeyBinarySelectResult));
+        result->count = SPI_processed;
+        
+        result->key1_array = (int*) SPI_palloc(result->count * sizeof(int));
+        result->key2_array = (int*) SPI_palloc(result->count * sizeof(int));
+        result->data_array = (void**) SPI_palloc(result->count * sizeof(void*));
+        result->size_array = (size_t*) SPI_palloc(result->count * sizeof(size_t));
+        
+        TupleDesc tupdesc = SPI_tuptable->tupdesc;
+        
+        for (int i = 0; i < result->count; i++) {
+            HeapTuple tuple = SPI_tuptable->vals[i];
+            
+            // Get key1 and key2 values
+            bool isnull;
+            Datum key1_datum = SPI_getbinval(tuple, tupdesc, 1, &isnull);
+            result->key1_array[i] = DatumGetInt32(key1_datum);
+            
+            Datum key2_datum = SPI_getbinval(tuple, tupdesc, 2, &isnull);
+            result->key2_array[i] = DatumGetInt32(key2_datum);
+            
+            // Get large object data
+            Datum lo_oid_datum = SPI_getbinval(tuple, tupdesc, 3, &isnull);
+            if (!isnull) {
+                Oid lo_oid = DatumGetObjectId(lo_oid_datum);
+                
+                // Open large object
+                LargeObjectDesc *lobj_desc = inv_open(lo_oid, INV_READ, CurrentMemoryContext);
+                if (lobj_desc != NULL) {
+                    // Get large object size
+                    int64 lo_size = inv_seek(lobj_desc, 0, SEEK_END);
+                    inv_seek(lobj_desc, 0, SEEK_SET);
+                    
+                    if (lo_size >= 0) {
+                        result->size_array[i] = lo_size;
+                        result->data_array[i] = SPI_palloc(lo_size);
+                        
+                        int nbytes = inv_read(lobj_desc, (char*)result->data_array[i], lo_size);
+                        if (nbytes != lo_size) {
+                            result->data_array[i] = NULL;
+                            result->size_array[i] = 0;
+                        }
+                    } else {
+                        result->data_array[i] = NULL;
+                        result->size_array[i] = 0;
+                    }
+                    
+                    inv_close(lobj_desc);
+                } else {
+                    result->data_array[i] = NULL;
+                    result->size_array[i] = 0;
+                }
+            } else {
+                result->data_array[i] = NULL;
+                result->size_array[i] = 0;
+            }
+        }
+    }
+    
+    pfree(sql_buf.data);
+    SPI_finish();
+    
+    return result;
+} 

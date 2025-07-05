@@ -42,6 +42,9 @@ struct OctreeNode {
 // Function to recursively collect all leaf nodes
  void getLeafNodes(OctreeNode* node, std::vector< OctreeNode*>& leaves);
 
+// Function to recursively collect all nodes
+ void getAllNodes(OctreeNode* node, std::vector< OctreeNode*>& nodes);
+
 
  struct DBOctreeNode {
     SpatialBounds bound;                             
@@ -55,6 +58,7 @@ struct OctreeNode {
 // DBOctreeNode point_query_octree(SpatialPoint &point,std::vector<DBOctreeNode> &nodes);
 
  void split_data(int id,std::vector<DBOctreeNode> &nodes, std::vector<SpatioTemporalData> &data,std::unordered_map<int,std::vector<SpatioTemporalData>> &result);
+ std::vector<DBOctreeNode> convertOctreeToDB(OctreeNode* root,int chunk_id=-1);
+ bool validateConversion(const OctreeNode* originalNode, const std::vector<DBOctreeNode>& dbNodes, int dbIndex);
 
-
-#endif // OCTREENODE_H
+ #endif // OCTREENODE_H

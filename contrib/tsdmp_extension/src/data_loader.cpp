@@ -8,6 +8,7 @@
 #include <thread>
 #include <mutex>
 #include <regex>
+#include <stdexcept>
 #include <nlohmann/json.hpp>
 
 // Only include necessary PostgreSQL headers
@@ -21,8 +22,10 @@ extern "C" {
 #include "../include/parameter.h"
 #include "../include/mesh_connection_manager.h"
 #include "../include/octree_node_manager.h"
+#include "../include/octree_node.h"
 #include "../include/kdtree_node_manager.h"
 #include "../include/userdata_manager.h"
+#include "../include/original_data_manager.h"
 #include "../include/utils.h"
 #include "../include/safe_logger.h"
 #include "file_sorter.h"
@@ -205,27 +208,27 @@ void DataLoader::build_index()
     this->build_time["doChunking_time->merging_time"] = tc.second();
     tc.tick();
     elog(INFO, "build chunk");
-//     OctreeNode *root = building_octree_bottom_up_top_down(global_bound);// build chunk
-//     std::vector<DBOctreeNode> dbNodes = convertOctreeToDB(root);
-//     OctreeNodeManager::writeOctreeNodesToDatabase(-1, dbNodes);
-//     if(delete_files)
-//     std::remove((data_dir + "/sample_data/all_sampled_data.bin").c_str());
-//     this->build_time["doChunking_time->chunk_constrution_time"] = tc.second();
-//     if (0)
-//     { // validation
-//         dbNodes = OctreeNodeManager::loadOctreeNodesFromDatabase(-1);
-//         std::cout << "dbNodes:" << dbNodes.size() << std::endl;
-//         if (validateConversion(root, dbNodes, 0))
-//         {
-//             std::cout << "Validation passed: The structures are consistent.\n";
-//         }
-//         else
-//         {
-//             std::cout << "Validation failed: The structures are not consistent.\n";
-//         }
-//     }
-//     std::cout << "create chunk time: " << tc.second() << std::endl;
-//     delete root;
+    OctreeNode *root = building_octree_bottom_up_top_down(global_bound);// build chunk
+    std::vector<DBOctreeNode> dbNodes = convertOctreeToDB(root);
+    OctreeNodeManager::writeOctreeNodesToDatabase(-1, dbNodes);
+    // if(delete_files)
+    // std::remove((data_dir + "/sample_data/all_sampled_data.bin").c_str());
+    this->build_time["doChunking_time->chunk_constrution_time"] = tc.second();
+    if (0)
+    { // validation
+        dbNodes = OctreeNodeManager::loadOctreeNodesFromDatabase(-1);
+        std::cout << "dbNodes:" << dbNodes.size() << std::endl;
+        if (validateConversion(root, dbNodes, 0))
+        {
+            std::cout << "Validation passed: The structures are consistent.\n";
+        }
+        else
+        {
+            std::cout << "Validation failed: The structures are not consistent.\n";
+        }
+    }
+    std::cout << "create chunk time: " << tc.second() << std::endl;
+    delete root;
 }
 
 /**
@@ -771,7 +774,7 @@ void DataLoader::para_sort_sample_file(const Bounds &bounds)
  * - Removes intermediate files to save disk space
  * - Maintains Z-order sorting for spatial locality
  * 
- * @throws StringException If data file validation fails
+ * @throws std::runtime_error If data file validation fails
  * 
  * @note Uses external merge sort to handle datasets larger than memory
  * @note Validates data integrity throughout the process
@@ -843,27 +846,27 @@ void DataLoader::merge_sample_data(){
     
 }
 
-// OctreeNode *building_octree_bottom_up_top_down(Bounds bounds)
-// {
-//     BuildChunk build_util(max_concurrent_task_across_chunk);
-//     build_util.load_sample_size();
-//     std::int64_t count_sample = 0;
-//     for (auto &i : build_util.sample_cell_num_in_diff_level.back())
-//     {
-//         count_sample += i;
-//     }
-//     std::cout << "prepare:" << count_sample << std::endl;
-//     std::cout << "build_util.sample_cell_num_in_diff_level:" << build_util.sample_cell_num_in_diff_level.size() << std::endl;
-//     std::cout << "build_util.cell_num_in_diff_level:" << build_util.cell_num_in_diff_level.size() << std::endl;
+OctreeNode *building_octree_bottom_up_top_down(Bounds bounds)
+{
+    BuildChunk build_util(max_concurrent_task_across_chunk);
+    build_util.load_sample_size();
+    std::int64_t count_sample = 0;
+    for (auto &i : build_util.sample_cell_num_in_diff_level.back())
+    {
+        count_sample += i;
+    }
+    std::cout << "prepare:" << count_sample << std::endl;
+    std::cout << "build_util.sample_cell_num_in_diff_level:" << build_util.sample_cell_num_in_diff_level.size() << std::endl;
+    std::cout << "build_util.cell_num_in_diff_level:" << build_util.cell_num_in_diff_level.size() << std::endl;
 
-//     clear_folder(data_dir + "/chunk_data");
-//     auto root = build_util.build_chunk_node_sample(bounds, 0, 0, 0, 0);//build chunk
-//     build_util.do_indexing_thread_pool.wait_for_all_tasks();
-//     std::cout << "chunk node count:" << build_util.node_count << std::endl;
-//     std::cout << "split sample size:" << build_util.split_sample_count << std::endl;
-//     std::cout << "sample file point position:" << build_util.sample_file.tellg() / sizeof(SpatioTemporalData) << std::endl;
-//     return root;
-// }
+    clear_folder(data_dir + "/chunk_data");
+    auto root = build_util.build_chunk_node_sample(bounds, 0, 0, 0, 0);//build chunk
+    build_util.do_indexing_thread_pool.wait_for_all_tasks();
+    std::cout << "chunk node count:" << build_util.node_count << std::endl;
+    std::cout << "split sample size:" << build_util.split_sample_count << std::endl;
+    std::cout << "sample file point position:" << build_util.sample_file.tellg() / sizeof(SpatioTemporalData) << std::endl;
+    return root;
+}
 
 /**
  * @brief Merge two sorted files into a single sorted file
@@ -1223,4 +1226,347 @@ uint64_t DataLoader::Sequential_domerge(uint64_t cur_iter_id, bool sample_or_ori
     }
     elog(INFO, "merged it count: %lu - %lu", cur_iter_id, merged_count.load());
     return sample_files.size();
+}
+
+void BuildChunk::load_sample_size()
+{
+    uint64_t sampleCellNums = (int64_t)1 << (int64_t)chunk_max_level * 3, sampleDimension = (int64_t)1 << (int64_t)chunk_max_level;
+    {
+        std::ifstream sampleFile(data_dir +"/sample_data/sampleCellNums.bin", std::ios::binary);
+        sampleFile.seekg(0, std::ios::end);
+        std::streamsize fileSize = sampleFile.tellg();
+        sampleFile.seekg(0, std::ios::beg);
+        if (fileSize % sizeof(uint32_t) != 0)
+        {
+            throw std::runtime_error("数据文件大小异常");
+        }
+        std::size_t numElements = fileSize / sizeof(uint32_t);
+        if (numElements != sampleCellNums)
+        {
+            throw std::runtime_error("数据个数异常");
+        }
+        sampleCells.resize(numElements);
+        sampleFile.read(reinterpret_cast<char *>(sampleCells.data()), fileSize);
+        sampleFile.close();
+    }
+
+    node_count = 0;
+    long long sample_size = 0;
+    sample_file = std::ifstream(data_dir +"/sample_data/all_sampled_data.bin", std::ios::binary);
+    sample_file.seekg(0, std::ios::end);
+    std::streamsize fileSize = sample_file.tellg();
+    sample_size = fileSize / sizeof(SpatioTemporalData);
+    sample_all_size = sample_size;
+    std::cout << "样本文件大小:" << sample_size << std::endl;
+    sample_file.seekg(0, std::ios::beg);
+
+    auto copied_sampleCells = sampleCells;
+    while (copied_sampleCells.size() >= 1)
+    {
+        sample_cell_num_in_diff_level.push_back(copied_sampleCells);
+        size_t newSize = copied_sampleCells.size() / 8;
+        if (newSize == 0)
+        {
+            break;
+        }
+        size_t count = 0;
+        std::vector<__uint32_t> mergedCells(newSize);
+        for (size_t i = 0; i < newSize; ++i)
+        {
+            __uint32_t mergedValue = 0;
+            for (size_t j = i * 8; j < (i + 1) * 8; ++j)
+            {
+                mergedValue += copied_sampleCells[j];
+            }
+            count += mergedValue;
+            mergedCells[i] = mergedValue;
+        }
+        std::cout << newSize << "======" << count << std::endl;
+        copied_sampleCells = std::move(mergedCells);
+    }
+    std::reverse(sample_cell_num_in_diff_level.begin(), sample_cell_num_in_diff_level.end());
+}
+
+void BuildChunk::split_original_data(Bounds bounds, uint64_t level, uint64_t x, uint64_t y, uint64_t z)
+{
+    auto id = node_count++;
+    uint64_t cell_id = interleaveBits(x, y, z,chunk_max_level);
+    auto pointCount = sample_cell_num_in_diff_level[level][cell_id];
+    if (pointCount <= max_point_per_chunk || level >= chunk_max_level)
+    {
+        // original data
+        int64_t chunk_original_data_size = cell_num_in_diff_level[level][cell_id];
+        std::vector<SpatioTemporalData> chunk_data(chunk_original_data_size);
+        original_file.read(reinterpret_cast<char *>(chunk_data.data()), chunk_original_data_size * sizeof(SpatioTemporalData));
+        // std::ofstream file("./chunk_original_data/chunk_data_" + std::to_string(id) + ".bin", std::ios::binary);
+        // int64_t remaining = chunk_original_data_size;
+        // while (remaining > 0)
+        // {
+        //     size_t to_read = std::min(static_cast<int64_t>(buffer_size), remaining);
+            
+        //     file.write(reinterpret_cast<char *>(buffer.data()), to_read * sizeof(SpatioTemporalData));
+        //     remaining -= to_read;
+        //     split_original_count += to_read;
+        // }
+        // file.close();
+        do_indexing_thread_pool.post_task(
+            [chunk_data = std::move(chunk_data),id](){
+                chunk_original_data_to_db(id, chunk_data);
+            }
+        );
+        do_indexing_thread_pool.wait_for_all_tasks(max_concurrent_task_across_chunk * 2);
+        std::cout << " leaf info: " << " id:" << id << " level:" << level << " x:" << x << " y:" << y << " z:" << z << " size:" << chunk_original_data_size << std::endl;
+        return;
+    }
+    for (int i = 0; i < 8; ++i)
+    {
+        int bitx = (i >> 0) & 1;
+        int bity = (i >> 1) & 1;
+        int bitz = (i >> 2) & 1;
+        int new_x = (x << 1) | bitx;
+        int new_y = (y << 1) | bity;
+        int new_z = (z << 1) | bitz;
+        auto center = bounds.getCenter();
+        Bounds sub_bound = bounds;
+        if (bitx == 0)
+        {
+            sub_bound.max.x = center.x;
+        }
+        else
+        {
+            sub_bound.min.x = center.x;
+        }
+        if (bity == 0)
+        {
+            sub_bound.max.y = center.y;
+        }
+        else
+        {
+            sub_bound.min.y = center.y;
+        }
+
+        if (bitz == 0)
+        {
+            sub_bound.max.z = center.z;
+        }
+        else
+        {
+            sub_bound.min.z = center.z;
+        }
+        split_original_data(sub_bound, level + 1, new_x, new_y, new_z);
+    }
+}
+
+void split_data(int id,std::vector<DBOctreeNode> &nodes, std::vector<SpatioTemporalData> &data,std::unordered_map<int,std::vector<SpatioTemporalData>> &result) {
+    auto &node = nodes[id];
+    if(node.is_leaf){
+        result[node.id] = std::move(data);
+        return;
+    }
+    auto center = node.bound.getCenter();
+    std::vector<SpatioTemporalData> sub_data[8];
+    for(auto &point:data){
+        uint64_t childIndex = 0;
+        if (point.x < center.x){childIndex |= 0;} 
+        else{childIndex |= 1;}
+        if (point.y < center.y) {childIndex |= 0;}
+        else{childIndex |= 2;}
+        if (point.z < center.z) {childIndex |= 0;}
+        else{childIndex |= 4;}
+        sub_data[childIndex].push_back(point);
+    }
+    for(int i = 0;i<8;++i){
+        if(node.children[i] == -1){
+            if(sub_data[i].size() > 0){
+                std::cerr<<"这里出现的原因是采样点没有，但是原始数据有"<<std::endl;
+            }
+            continue;
+        }
+        split_data(node.children[i],nodes,sub_data[i],result);
+    }
+}
+
+void chunk_original_data_to_db(int chunk_id, std::vector<SpatioTemporalData> all_data)
+{
+    std::vector<DBOctreeNode> ocNodes = OctreeNodeManager::loadOctreeNodesFromDatabase(chunk_id);
+    size_t data_count = 0;
+    long long in_this_file_read_count = 0;
+    std::unordered_map<int, std::vector<SpatioTemporalData>> to_db_data; // octree leaf id --> data
+    auto write_points_to_db = [&](int octreeid, int kdtreeid, std::vector<SpatioTemporalData> &data)
+    {
+        std::sort(data.begin(), data.end(), [](const SpatioTemporalData &a, const SpatioTemporalData &b)
+                  { return a.time < b.time; });
+        originalDataManager.writeOriginalDataToDatabase(octreeid, kdtreeid, data);
+    };
+
+    split_data(0, ocNodes, all_data, to_db_data);
+
+    for (auto &i : to_db_data)
+    {
+        in_this_file_read_count += i.second.size();
+    }
+    for (auto &i : to_db_data)
+    {
+        write_points_to_db(chunk_id, i.first, i.second);
+    }
+}
+
+// void chunk_original_data_to_db(DBOctreeNode leaf_node)
+// {
+//     std::vector<DBOctreeNode> ocNodes = OctreeNodeManager::loadOctreeNodesFromDatabase(leaf_node.id);
+//     size_t data_count = 0;
+//     std::vector<SpatioTemporalData> all_data;
+//     {
+//         auto original_file = std::ifstream(data_dir + "/chunk_original_data/" + std::to_string(leaf_node.id) + ".bin", std::ios::binary);
+//         if (!original_file.is_open()) {
+//             return;
+//         }
+//         original_file.seekg(0, std::ios::end);
+//         size_t file_size = original_file.tellg();
+//         original_file.seekg(0, std::ios::beg);
+//         data_count = file_size / sizeof(SpatioTemporalData);
+//         std::cout <<"leaf_node.id:"<<leaf_node.id<<"  data_count:"<<data_count<< std::endl;
+//         all_data.resize(data_count);
+//         original_file.read(reinterpret_cast<char *>(all_data.data()), file_size);
+//         original_file.close();
+//         if(delete_files)
+//         std::remove((data_dir + "/chunk_original_data/" + std::to_string(leaf_node.id) + ".bin").c_str());
+//     }
+//     long long in_this_file_read_count = 0;
+//     std::unordered_map<int, std::vector<SpatioTemporalData>> to_db_data; // octree leaf id --> data
+//     auto write_points_to_db = [&](int octreeid, int kdtreeid, std::vector<SpatioTemporalData> &data)
+//     {
+//         std::sort(data.begin(), data.end(), [](const SpatioTemporalData &a, const SpatioTemporalData &b)
+//                   { return a.time < b.time; });
+//         originalDataManager.writeOriginalDataToDatabase(octreeid, kdtreeid, data);
+//     };
+
+//     split_data(0, ocNodes, all_data, to_db_data);
+
+//     for (auto &i : to_db_data)
+//     {
+//         in_this_file_read_count += i.second.size();
+//     }
+//     for (auto &i : to_db_data)
+//     {
+//         write_points_to_db(leaf_node.id, i.first, i.second);
+//     }
+// }
+
+
+void BuildChunk::load_original_and_sample_size(){
+    uint64_t sampleCellNums = (int64_t)1 << (int64_t)chunk_max_level * 3, sampleDimension = (int64_t)1 << (int64_t)chunk_max_level;
+    {
+        sampleCells.resize(sampleCellNums);
+        originalCells.resize(sampleCellNums);
+        std::ifstream originalFile(data_dir +"/sample_data/originalCellNums.bin", std::ios::binary);
+        originalFile.seekg(0, std::ios::end);
+        std::streamsize fileSize = originalFile.tellg();
+        originalFile.seekg(0, std::ios::beg);
+        if (fileSize % sizeof(uint64_t) != 0)
+        {
+            throw std::runtime_error("数据文件大小异常");
+        }
+        std::size_t numElements = fileSize / sizeof(uint64_t);
+        if (numElements != sampleCellNums)
+        {
+            throw std::runtime_error("数据文件大小异常");
+        }
+        originalCells.resize(numElements);
+        originalFile.read(reinterpret_cast<char *>(originalCells.data()), fileSize);
+        originalFile.close();
+    }
+    {
+        std::ifstream sampleFile(data_dir +"/sample_data/sampleCellNums.bin", std::ios::binary);
+        sampleFile.seekg(0, std::ios::end);
+        std::streamsize fileSize = sampleFile.tellg();
+        sampleFile.seekg(0, std::ios::beg);
+        if (fileSize % sizeof(uint32_t) != 0)
+        {
+            throw std::runtime_error("数据文件大小异常");
+        }
+        std::size_t numElements = fileSize / sizeof(uint32_t);
+        if (numElements != sampleCellNums)
+        {
+            throw std::runtime_error("数据文件大小异常");
+        }
+        sampleCells.resize(numElements);
+        sampleFile.read(reinterpret_cast<char *>(sampleCells.data()), fileSize);
+        sampleFile.close();
+    }
+
+    node_count = 0;
+    long long sample_size = 0;
+    sample_file = std::ifstream(data_dir +"/sample_data/all_sampled_data.bin", std::ios::binary);
+    sample_file.seekg(0, std::ios::end);
+    std::streamsize fileSize = sample_file.tellg();
+    sample_size = fileSize / sizeof(SpatioTemporalData);
+    sample_all_size = sample_size;
+    std::cout << "样本文件大小:" << sample_size << std::endl;
+    sample_file.seekg(0, std::ios::beg);
+
+    original_file = std::ifstream(data_dir +"/original_data/all_data.bin", std::ios::binary);
+    original_file.seekg(0, std::ios::end);
+    fileSize = original_file.tellg();
+    sample_size = fileSize / sizeof(SpatioTemporalData);
+    original_all_size = sample_size;
+    std::cout << "数据文件大小:" << sample_size << std::endl;
+    original_file.seekg(0, std::ios::beg);
+
+    auto copied_sampleCells = sampleCells;
+    while (copied_sampleCells.size() >= 1)
+    {
+        sample_cell_num_in_diff_level.push_back(copied_sampleCells);
+        size_t newSize = copied_sampleCells.size() / 8;
+        if (newSize == 0)
+        {
+            break;
+        }
+        size_t count = 0;
+        std::vector<__uint32_t> mergedCells(newSize);
+        for (size_t i = 0; i < newSize; ++i)
+        {
+            __uint32_t mergedValue = 0;
+            for (size_t j = i * 8; j < (i + 1) * 8; ++j)
+            {
+                mergedValue += copied_sampleCells[j];
+            }
+            count += mergedValue;
+            mergedCells[i] = mergedValue;
+        }
+        std::cout << newSize << "======" << count << std::endl;
+        copied_sampleCells = std::move(mergedCells);
+    }
+    auto copied_originalCells = originalCells;
+    while (copied_originalCells.size() >= 1)
+    {
+        cell_num_in_diff_level.push_back(copied_originalCells);
+        size_t newSize = copied_originalCells.size() / 8;
+        if (newSize == 0)
+        {
+            break;
+        }
+        size_t count = 0;
+        std::vector<__uint64_t> mergedCells(newSize);
+        for (size_t i = 0; i < newSize; ++i)
+        {
+            __uint32_t mergedValue = 0;
+            for (size_t j = i * 8; j < (i + 1) * 8; ++j)
+            {
+                mergedValue += copied_originalCells[j];
+            }
+            count += mergedValue;
+            mergedCells[i] = mergedValue;
+        }
+        std::cout << newSize << "======" << count << std::endl;
+        copied_originalCells = std::move(mergedCells);
+    }
+
+    assert(cell_num_in_diff_level.size() == sample_cell_num_in_diff_level.size());
+    for (int i = 0; i < cell_num_in_diff_level.size(); ++i)
+    {
+        assert(cell_num_in_diff_level[i].size() == sample_cell_num_in_diff_level[i].size());
+    }
+    std::reverse(cell_num_in_diff_level.begin(), cell_num_in_diff_level.end());
+    std::reverse(sample_cell_num_in_diff_level.begin(), sample_cell_num_in_diff_level.end());
 }

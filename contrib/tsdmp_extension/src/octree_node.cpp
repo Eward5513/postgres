@@ -194,3 +194,54 @@ void getLeafNodes(OctreeNode* node, std::vector< OctreeNode*>& leaves) {
         }
     }
 }
+
+ std::vector<DBOctreeNode> convertOctreeToDB(OctreeNode* root,int chunk_id) {
+    std::vector<OctreeNode*> all_nodes;
+    getAllNodes(root,all_nodes);
+    std::vector<DBOctreeNode> dbNodes;
+    dbNodes.resize(all_nodes.size());
+    for(auto node:all_nodes){
+        DBOctreeNode dbNode;
+        dbNode.bound.min.x = node->bound.min.x;
+        dbNode.bound.min.y = node->bound.min.y;
+        dbNode.bound.min.z = node->bound.min.z;
+        dbNode.bound.max.x = node->bound.max.x;
+        dbNode.bound.max.y = node->bound.max.y;
+        dbNode.bound.max.z = node->bound.max.z;
+        dbNode.id = node->id;
+        dbNode.is_leaf = node->is_leaf;
+        if(dbNode.is_leaf){
+            dbNode.oc_id = chunk_id;
+            dbNode.kd_id = node->id;
+        }
+        for(int i = 0;i<8;++i){
+            if(node->children[i] != nullptr){
+                dbNode.children[i] = node->children[i]->id;
+            }
+        }
+        dbNodes[dbNode.id] = dbNode;
+    }
+    return dbNodes;
+}
+
+bool validateConversion(const OctreeNode* originalNode, const std::vector<DBOctreeNode>& dbNodes, int dbIndex) {
+    if (!originalNode && dbIndex == -1) return true;
+    if (!originalNode || dbIndex == -1) return false;
+    // std::cout <<<< std::endl;
+    const DBOctreeNode& dbNode = dbNodes[dbIndex];
+
+    // Check basic properties
+    if (dbNode.id != originalNode->id ||
+        dbNode.is_leaf != originalNode->is_leaf) {
+        return false;
+    }
+
+    // Check children
+    for (int i = 0; i < 8; ++i) {
+        if (!validateConversion(originalNode->children[i], dbNodes, dbNode.children[i])) {
+            return false;
+        }
+    }
+
+    return true;
+}

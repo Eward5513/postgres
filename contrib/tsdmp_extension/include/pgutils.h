@@ -124,6 +124,52 @@ public:
     LargeObjectSelectResult* executeLargeObjectSelectByKey(const char* table_name, int key_value);
     
     /**
+     * @brief Insert dual key large object data
+     * @param table_name table name
+     * @param key1_value first key value
+     * @param key2_value second key value
+     * @param binary_data binary data pointer
+     * @param binary_size data size
+     */
+    void executeLargeObjectInsertDualKey(const char* table_name, int key1_value, int key2_value,
+                                        const void* binary_data, size_t binary_size);
+    
+    /**
+     * @brief Update dual key large object data
+     * @param table_name table name
+     * @param key1_value first key value
+     * @param key2_value second key value
+     * @param binary_data binary data pointer
+     * @param binary_size data size
+     */
+    void executeLargeObjectUpdateDualKey(const char* table_name, int key1_value, int key2_value,
+                                        const void* binary_data, size_t binary_size);
+    
+    /**
+     * @brief Query large object data by dual key
+     * @param table_name table name
+     * @param key1_value first key value
+     * @param key2_value second key value
+     * @return LargeObjectSelectResult* query result, caller needs to free memory
+     */
+    LargeObjectSelectResult* executeLargeObjectSelectByDualKey(const char* table_name, int key1_value, int key2_value);
+    
+    /**
+     * @brief Query all related large object data by first key value
+     * @param table_name table name
+     * @param key1_value first key value
+     * @return DualKeyBinarySelectResult* query result, caller needs to free memory
+     */
+    DualKeyBinarySelectResult* executeLargeObjectSelectByKey1(const char* table_name, int key1_value);
+    
+    /**
+     * @brief Query all large object data in dual key table
+     * @param table_name table name
+     * @return DualKeyBinarySelectResult* query result, caller needs to free memory
+     */
+    DualKeyBinarySelectResult* executeLargeObjectSelectAllDualKey(const char* table_name);
+    
+    /**
      * @brief Insert dual key binary data
      * @param table_name table name
      * @param key1_value first key value

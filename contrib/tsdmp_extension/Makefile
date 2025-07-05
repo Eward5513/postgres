@@ -13,7 +13,8 @@ OBJS = src/extension.o \
        src/pgutils.o \
        src/spatiotemporal_data.o \
        src/utils.o \
-       src/safe_logger.o
+       src/safe_logger.o \
+       src/original_data_manager.o
 
 EXTENSION = tsdmp
 DATA = tsdmp--1.0.sql

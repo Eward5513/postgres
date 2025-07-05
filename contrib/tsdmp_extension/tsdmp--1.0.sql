@@ -75,6 +75,17 @@ CREATE TABLE IF NOT EXISTS user_data (
     updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
 );
 
+-- 原始数据存储表 (用于存储大对象引用)
+CREATE TABLE IF NOT EXISTS original_data (
+    key1 INT,
+    key2 INT,
+    lo_oid OID,
+    userid_ivf_index BYTEA,
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    PRIMARY KEY (key1, key2)
+);
+
 -- 函数声明
 
 -- 数据加载函数
