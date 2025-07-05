@@ -229,27 +229,21 @@ void DataLoader::build_index()
 }
 
 /**
- * @brief Parallel bounds calculation and data sampling
+ * @brief Single-threaded bounds calculation and data sampling
  * 
- * This function orchestrates parallel processing of all input files to calculate
- * spatial bounds and perform data sampling. It's designed to handle large datasets
- * efficiently by distributing the workload across multiple threads.
+ * This function processes all input files sequentially to calculate
+ * spatial bounds and perform data sampling. It's designed to avoid
+ * multi-threading issues with database operations.
  * 
  * Processing workflow:
  * 1. Clean temporary directories for fresh processing
  * 2. Load file-to-ID mappings from metadata
- * 3. Process each file in parallel to:
+ * 3. Process each file sequentially to:
  *    - Calculate individual spatial bounds
  *    - Sample data points according to sampling ratio
  *    - Write original and sampled data to temporary files
  * 4. Merge all individual bounds into global bounds
  * 5. Persist global bounds to disk for later use
- * 
- * Parallelization strategy:
- * - Uses Boost.Asio thread pool for efficient task distribution
- * - Each file is processed independently to maximize parallelism
- * - Thread-safe progress tracking with atomic counters
- * - Concurrent directory cleaning to overlap I/O operations
  * 
  * @note Creates temporary directories for original and sampled data
  * @note Progress is logged with timing information for performance monitoring
@@ -269,29 +263,27 @@ void DataLoader::para_bound_and_sample(){
         in_file >> loaded_json;
         in_file.close();
     }
-        std::atomic<std::uint32_t> finished_file_counting = 0;
+    std::atomic<std::uint32_t> finished_file_counting = 0;
     
+    // Single-threaded processing instead of parallel
     for (std::uint32_t i = 0; i < this->filenames.size(); ++i)
     {
-        thread_pool.post_task([this, &loaded_json, &finished_file_counting, i, &sub_bounds]()
-        {
-            TimerClock tc;
-            auto file_name = this->filenames[i];
-            sub_bounds[i] = this->calculate_bound_and_sampleing(file_name,i,loaded_json[file_name].get<int16_t>()); 
-            
-            // 使用线程安全的输出函数
-            std::string log_message = "INFO: bound & sample: " + file_name + 
-                                     " progress: " + std::to_string(finished_file_counting++) + 
-                                     "/" + std::to_string(this->filenames.size()) + 
-                                     " time: " + std::to_string(tc.second()/max_concurrent_tasks_for_read_bound_task) + "s";
-            logger.log(log_message);
-            
-            // if(delete_original_files){
-            //     std::remove(file_name.c_str());
-            // }
-        });
+        TimerClock tc;
+        auto file_name = this->filenames[i];
+        sub_bounds[i] = this->calculate_bound_and_sampleing(file_name, i, loaded_json[file_name].get<int16_t>()); 
+        
+        // Log progress
+        std::string log_message = "INFO: bound & sample: " + file_name + 
+                                 " progress: " + std::to_string(finished_file_counting++) + 
+                                 "/" + std::to_string(this->filenames.size()) + 
+                                 " time: " + std::to_string(tc.second()) + "s";
+        elog(INFO, "%s", log_message.c_str());
+        
+        // if(delete_original_files){
+        //     std::remove(file_name.c_str());
+        // }
     }
-    thread_pool.wait_for_all_tasks();
+    
     // std::cout << "data_size:" << bounded_data_size << " file count:" << finished_file_counting << std::endl;
     bool firstFlag = true;
     global_bound = sub_bounds.front();
@@ -718,20 +710,16 @@ void DataLoader::para_sort_sample_file(const Bounds &bounds)
     int file_id = 0;
     for (const auto &filename : filenames)
     {
-        thread_pool.post_task([this, file_id, filename, &bounds, &sampleCells]()
-        {
-            TimerClock tc;
-            this->sort_sample_file(file_id, filename, bounds, sampleCells); 
-            // 使用线程安全的输出函数
-            std::string log_message = "INFO: sort sample: " + filename + 
-                                     " time: " + std::to_string(tc.second()/max_concurrent_tasks_for_count_task) + "s";
-            logger.log(log_message);
-            // if(delete_files)
-            // std::remove(filename.c_str());
-        });
+        TimerClock tc;
+        this->sort_sample_file(file_id, filename, bounds, sampleCells); 
+        // Log progress
+        std::string log_message = "INFO: sort sample: " + filename + 
+                                 " time: " + std::to_string(tc.second()) + "s";
+        elog(INFO, "%s", log_message.c_str());
+        // if(delete_files)
+        // std::remove(filename.c_str());
         ++file_id;
     }
-    thread_pool.wait_for_all_tasks();
     std::ofstream sampleWrite(data_dir + "/sample_data/sampleCellNums.bin", std::ios::binary | std::ios::app);
     sampleWrite.write(reinterpret_cast<const char *>(sampleCells.data()), sampleCellNums * sizeof(std::uint32_t));
     sampleWrite.close();
@@ -772,7 +760,7 @@ void DataLoader::merge_sample_data(){
     std::uint64_t cur_iter_id = 0;
     while (1)
     {
-        auto cur_file_num = this->Para_domerge(cur_iter_id, true);
+        auto cur_file_num = this->Sequential_domerge(cur_iter_id, true);
         cur_file_num = (cur_file_num + 1) >> 1;
         cur_iter_id++;
         if (cur_file_num <= 1)
@@ -1088,7 +1076,7 @@ uint64_t domerge(uint64_t cur_file_id, uint64_t cur_iter, uint64_t cur_file_num,
     {
         if (to_print)
         {
-            // 使用线程安全的输出函数
+            // Log merge progress
             std::string log_message = "INFO: " + std::to_string(all_number) + 
                                      " cur_file_id:" + std::to_string(cur_file_id) + 
                                      " cur_iter:" + std::to_string(cur_iter) + 
@@ -1096,7 +1084,7 @@ uint64_t domerge(uint64_t cur_file_id, uint64_t cur_iter, uint64_t cur_file_num,
                                      " next:" + next_file_name + 
                                      " cur:" + cur_file_name + 
                                      " new:" + new_file_name;
-            logger.log(log_message);
+            elog(INFO, "%s", log_message.c_str());
         }
         return all_number;
     }
@@ -1150,7 +1138,7 @@ uint64_t domerge(uint64_t cur_file_id, uint64_t cur_iter, uint64_t cur_file_num,
     }
     if (to_print)
     {
-        // 使用线程安全的输出函数
+        // Log merge progress
         std::string log_message = "INFO: " + std::to_string(all_number) + 
                                  " cur_file_id:" + std::to_string(cur_file_id) + 
                                  " cur_iter:" + std::to_string(cur_iter) + 
@@ -1158,42 +1146,36 @@ uint64_t domerge(uint64_t cur_file_id, uint64_t cur_iter, uint64_t cur_file_num,
                                  " next:" + next_file_name + 
                                  " cur:" + cur_file_name + 
                                  " new:" + new_file_name;
-        logger.log(log_message);
+        elog(INFO, "%s", log_message.c_str());
     }
     return all_number;
 }
 
 /**
- * @brief Parallel merge operation for one iteration of external merge sort
+ * @brief Sequential merge operation for one iteration of external merge sort
  * 
- * This function orchestrates parallel merging of multiple file pairs in a single
- * iteration of the external merge sort algorithm. It manages thread pools for
- * both merging and cleanup operations to maximize efficiency.
+ * This function orchestrates sequential merging of multiple file pairs in a single
+ * iteration of the external merge sort algorithm. It performs merging and cleanup
+ * operations sequentially to avoid database threading issues.
  * 
- * Parallel merge strategy:
+ * Sequential merge strategy:
  * 1. Discover all files for current iteration
- * 2. Create merge tasks for adjacent file pairs (i, i+1)
- * 3. Execute merges in parallel using thread pool
- * 4. Clean up processed files in parallel
+ * 2. Process adjacent file pairs (i, i+1) sequentially
+ * 3. Execute merges one by one 
+ * 4. Clean up processed files sequentially
  * 5. Return file count for next iteration planning
- * 
- * Thread management:
- * - Uses separate thread pools for merging and file deletion
- * - Atomic counter for thread-safe merge statistics
- * - Parallel cleanup to minimize iteration time
  * 
  * @param cur_iter_id Current iteration identifier (0-based)
  * @param sample_or_original Flag to choose between sample_data or original_data
  * @return uint64_t Number of files processed (for next iteration planning)
  * 
  * @note Merges files in pairs: (0,1) -> 0, (2,3) -> 1, etc.
- * @note Uses atomic operations for thread-safe statistics
- * @note Cleanup is parallelized to minimize total iteration time
+ * @note Sequential processing avoids database threading conflicts
  * @note Works with both sample and original data directories
  */
-uint64_t DataLoader::Para_domerge(uint64_t cur_iter_id, bool sample_or_original)
+uint64_t DataLoader::Sequential_domerge(uint64_t cur_iter_id, bool sample_or_original)
 {
-    elog(INFO, "Create merge thread pool: %lu", cur_iter_id);
+    elog(INFO, "Sequential merge iteration: %lu", cur_iter_id);
     string prefix;
     if (sample_or_original)
     {
@@ -1207,25 +1189,16 @@ uint64_t DataLoader::Para_domerge(uint64_t cur_iter_id, bool sample_or_original)
     std::atomic<uint64_t> merged_count(0);
     for (uint64_t i = 0; i < sample_files.size(); i += 2)
     {
-        thread_pool.post_task([&, i,cur_iter_id,file_set_size=sample_files.size()]()
-                              { merged_count += domerge(i, cur_iter_id, file_set_size, prefix); });
+        merged_count += domerge(i, cur_iter_id, sample_files.size(), prefix);
     }
-    thread_pool.wait_for_all_tasks();
     // sample_files = findFilesWithPrefix("./" + prefix, to_string(cur_iter_id) + "_");
 
     {
-        auto tasks = split<std::int64_t>(0,sample_files.size(),max_concurrent_tasks_for_count_task * 2);
-        for (auto task : tasks)
-        {
-            thread_pool.post_task([prefix,task,&sample_files]()
-            {
-                for(std::int64_t i = task.first;i<task.second;++i){
-                    std::string file_path = data_dir +"/" + prefix + "/" + sample_files[i];
-                    std::remove(file_path.c_str()); 
-                }
-            });
+        // Clean up processed files sequentially
+        for(std::int64_t i = 0; i < sample_files.size(); ++i){
+            std::string file_path = data_dir +"/" + prefix + "/" + sample_files[i];
+            std::remove(file_path.c_str()); 
         }
-        thread_pool.wait_for_all_tasks();
     }
     elog(INFO, "merged it count: %lu - %lu", cur_iter_id, merged_count.load());
     return sample_files.size();
