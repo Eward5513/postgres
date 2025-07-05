@@ -1,11 +1,24 @@
 #include "../include/safe_header.h"
 #include "../include/pgutils.h"
+#include <mutex>
 
-// PostgreSQL数据库工具函数实现
+// PostgreSQL singleton database utilities implementation
 
-void execute_sql(const char* sql)
-{
-    elog(INFO, "execute_sql: %s", sql);
+PostgreSQLUtils& PostgreSQLUtils::getInstance() {
+    static PostgreSQLUtils instance;
+    return instance;
+}
+
+// Global instance definition for convenient access
+PostgreSQLUtils& pgutils = PostgreSQLUtils::getInstance();
+
+void PostgreSQLUtils::executeSQL(const char* sql) {
+    std::lock_guard<std::mutex> lock(spi_mutex_);
+    
+    // Increment call count
+    sql_call_count_++;
+    
+    elog(INFO, "PostgreSQLUtils::executeSQL #%d: %s", sql_call_count_, sql);
 
     if (SPI_connect() != SPI_OK_CONNECT) {
         ereport(ERROR, (errcode(ERRCODE_INTERNAL_ERROR),
@@ -21,8 +34,9 @@ void execute_sql(const char* sql)
     SPI_finish();
 }
 
-SPITupleTable* execute_sql_select(const char* sql)
-{
+SPITupleTable* PostgreSQLUtils::executeSQLSelect(const char* sql) {
+    std::lock_guard<std::mutex> lock(spi_mutex_);
+    
     if (SPI_connect() != SPI_OK_CONNECT) {
         ereport(ERROR, (errcode(ERRCODE_INTERNAL_ERROR),
                        errmsg("could not connect to SPI")));
@@ -38,59 +52,72 @@ SPITupleTable* execute_sql_select(const char* sql)
     SPITupleTable* result = NULL;
     
     if (SPI_tuptable && SPI_processed > 0) {
-        // 使用SPI_palloc在调用者上下文中分配SPITupleTable
+        // Use SPI_palloc to allocate SPITupleTable in caller context
         result = (SPITupleTable*) SPI_palloc(sizeof(SPITupleTable));
         
-        // 复制基本信息
+        // Copy basic information
         result->alloced = SPI_processed;
         // result->free = 0;  // 'free' member removed in newer PostgreSQL versions
         
-        // 复制TupleDesc到调用者上下文
+        // Copy TupleDesc to caller context
         result->tupdesc = CreateTupleDescCopy(SPI_tuptable->tupdesc);
         
-        // 分配HeapTuple数组
+        // Allocate HeapTuple array
         result->vals = (HeapTuple*) SPI_palloc(SPI_processed * sizeof(HeapTuple));
         
-        // 复制每个HeapTuple到调用者上下文
+        // Copy each HeapTuple to caller context
         for (uint64 i = 0; i < SPI_processed; i++) {
             result->vals[i] = SPI_copytuple(SPI_tuptable->vals[i]);
         }
     }
     
-    // 完成SPI操作
+    // Complete SPI operation
     SPI_finish();
     
     return result;
 }
 
-void execute_binary_insert(const char* table_name, int key_value, 
-                          const void* binary_data, size_t binary_size)
-{
+void PostgreSQLUtils::executeBinaryInsert(const char* table_name, int key_value, 
+                                         const void* binary_data, size_t binary_size) {
+    std::lock_guard<std::mutex> lock(spi_mutex_);
+    
+    // Increment call count
+    insert_call_count_++;
+    
+    // Record call information
+    elog(INFO, "PostgreSQLUtils::executeBinaryInsert #%d: table=%s, key=%d, data_size=%zu bytes", 
+         insert_call_count_, table_name, key_value, binary_size);
+    
     if (SPI_connect() != SPI_OK_CONNECT) {
         ereport(ERROR, (errcode(ERRCODE_INTERNAL_ERROR),
                        errmsg("could not connect to SPI")));
     }
     
-    // 构建INSERT语句
+    // Build INSERT statement
     StringInfoData sql_buf;
     initStringInfo(&sql_buf);
     appendStringInfo(&sql_buf, "INSERT INTO %s (key, data) VALUES ($1, $2)", table_name);
     
-    // 准备参数
+    // Prepare parameters
     Oid argtypes[2] = {INT4OID, BYTEAOID};
     Datum values[2];
     char nulls[2] = {' ', ' '};
     
-    // 设置键值参数
+    // Set key value parameter
     values[0] = Int32GetDatum(key_value);
     
-    // 设置二进制数据参数
+    // Set binary data parameter
     bytea *binary_bytea = (bytea *) palloc(VARHDRSZ + binary_size);
     SET_VARSIZE(binary_bytea, VARHDRSZ + binary_size);
     memcpy(VARDATA(binary_bytea), binary_data, binary_size);
     values[1] = PointerGetDatum(binary_bytea);
     
-    // 准备并执行计划
+    // Record actual allocated memory size
+    size_t allocated_size = VARHDRSZ + binary_size;
+    elog(INFO, "PostgreSQLUtils::executeBinaryInsert #%d: allocated bytea size=%zu bytes (header=%d + data=%zu)", 
+         insert_call_count_, allocated_size, VARHDRSZ, binary_size);
+    
+    // Prepare and execute plan
     SPIPlanPtr plan = SPI_prepare(sql_buf.data, 2, argtypes);
     if (plan == NULL) {
         pfree(sql_buf.data);
@@ -108,32 +135,37 @@ void execute_binary_insert(const char* table_name, int key_value,
                        errmsg("SPI_execute_plan failed for INSERT")));
     }
     
+    // Record success information
+    elog(INFO, "PostgreSQLUtils::executeBinaryInsert #%d: SUCCESS - inserted %zu bytes into %s[key=%d]", 
+         insert_call_count_, binary_size, table_name, key_value);
+    
     SPI_freeplan(plan);
     pfree(sql_buf.data);
     SPI_finish();
 }
 
-BinarySelectResult* execute_binary_select(const char* table_name, int key_value)
-{
+BinarySelectResult* PostgreSQLUtils::executeBinarySelect(const char* table_name, int key_value) {
+    std::lock_guard<std::mutex> lock(spi_mutex_);
+    
     if (SPI_connect() != SPI_OK_CONNECT) {
         ereport(ERROR, (errcode(ERRCODE_INTERNAL_ERROR),
                        errmsg("could not connect to SPI")));
     }
     
-    // 构建SELECT语句
+    // Build SELECT statement
     StringInfoData sql_buf;
     initStringInfo(&sql_buf);
     appendStringInfo(&sql_buf, "SELECT data FROM %s WHERE key = $1", table_name);
     
-    // 准备参数
+    // Prepare parameters
     Oid argtypes[1] = {INT4OID};
     Datum values[1];
     char nulls[1] = {' '};
     
-    // 设置键值参数
+    // Set key value parameter
     values[0] = Int32GetDatum(key_value);
     
-    // 准备并执行计划
+    // Prepare and execute plan
     SPIPlanPtr plan = SPI_prepare(sql_buf.data, 1, argtypes);
     if (plan == NULL) {
         pfree(sql_buf.data);
@@ -154,7 +186,7 @@ BinarySelectResult* execute_binary_select(const char* table_name, int key_value)
     BinarySelectResult* result = NULL;
     
     if (SPI_processed > 0) {
-        // 获取结果
+        // Get result
         HeapTuple tuple = SPI_tuptable->vals[0];
         TupleDesc tupdesc = SPI_tuptable->tupdesc;
         
@@ -165,17 +197,17 @@ BinarySelectResult* execute_binary_select(const char* table_name, int key_value)
             bytea *binary_bytea = DatumGetByteaP(datum);
             size_t data_size = VARSIZE(binary_bytea) - VARHDRSZ;
             
-            // 使用SPI_palloc在调用者上下文中分配结构体
+            // Use SPI_palloc to allocate struct in caller context
             result = (BinarySelectResult*) SPI_palloc(sizeof(BinarySelectResult));
             result->size = data_size;
             
-            // 使用SPI_palloc在调用者上下文中分配数据内存
+            // Use SPI_palloc to allocate data memory in caller context
             result->data = SPI_palloc(data_size);
             memcpy(result->data, VARDATA(binary_bytea), data_size);
         }
     }
     
-    // 清理SPI资源
+    // Clean up SPI resources
     SPI_freeplan(plan);
     pfree(sql_buf.data);
     SPI_finish();
@@ -183,14 +215,15 @@ BinarySelectResult* execute_binary_select(const char* table_name, int key_value)
     return result;
 }
 
-BinarySelectAllResult* execute_binary_select_all(const char* table_name)
-{
+BinarySelectAllResult* PostgreSQLUtils::executeBinarySelectAll(const char* table_name) {
+    std::lock_guard<std::mutex> lock(spi_mutex_);
+    
     if (SPI_connect() != SPI_OK_CONNECT) {
         ereport(ERROR, (errcode(ERRCODE_INTERNAL_ERROR),
                        errmsg("could not connect to SPI")));
     }
     
-    // 构建SELECT语句
+    // Build SELECT statement
     StringInfoData sql_buf;
     initStringInfo(&sql_buf);
     appendStringInfo(&sql_buf, "SELECT key, data FROM %s", table_name);
@@ -206,11 +239,11 @@ BinarySelectAllResult* execute_binary_select_all(const char* table_name)
     BinarySelectAllResult* result = NULL;
     
     if (SPI_processed > 0) {
-        // 使用SPI_palloc在调用者上下文中分配结构体
+        // Use SPI_palloc to allocate struct in caller context
         result = (BinarySelectAllResult*) SPI_palloc(sizeof(BinarySelectAllResult));
         result->count = SPI_processed;
         
-        // 使用SPI_palloc分配主数组
+        // Use SPI_palloc to allocate main arrays
         result->keys = (int*) SPI_palloc(result->count * sizeof(int));
         result->data_array = (void**) SPI_palloc(result->count * sizeof(void*));
         result->size_array = (size_t*) SPI_palloc(result->count * sizeof(size_t));
@@ -220,18 +253,18 @@ BinarySelectAllResult* execute_binary_select_all(const char* table_name)
         for (int i = 0; i < result->count; i++) {
             HeapTuple tuple = SPI_tuptable->vals[i];
             
-            // 获取键值
+            // Get key value
             bool isnull;
             Datum key_datum = SPI_getbinval(tuple, tupdesc, 1, &isnull);
             result->keys[i] = DatumGetInt32(key_datum);
             
-            // 获取二进制数据
+            // Get binary data
             Datum data_datum = SPI_getbinval(tuple, tupdesc, 2, &isnull);
             if (!isnull) {
                 bytea *binary_bytea = DatumGetByteaP(data_datum);
                 result->size_array[i] = VARSIZE(binary_bytea) - VARHDRSZ;
                 
-                // 使用SPI_palloc分配数据内存
+                // Use SPI_palloc to allocate data memory
                 result->data_array[i] = SPI_palloc(result->size_array[i]);
                 memcpy(result->data_array[i], VARDATA(binary_bytea), result->size_array[i]);
             } else {
@@ -247,21 +280,22 @@ BinarySelectAllResult* execute_binary_select_all(const char* table_name)
     return result;
 }
 
-void execute_largeobject_clear_table(const char* table_name)
-{
+void PostgreSQLUtils::executeLargeObjectClearTable(const char* table_name) {
+    std::lock_guard<std::mutex> lock(spi_mutex_);
+    
     if (SPI_connect() != SPI_OK_CONNECT) {
         ereport(ERROR, (errcode(ERRCODE_INTERNAL_ERROR),
                        errmsg("could not connect to SPI")));
     }
     
-    // 先查询所有大对象OID
+    // First query all large object OIDs
     StringInfoData sql_buf;
     initStringInfo(&sql_buf);
     appendStringInfo(&sql_buf, "SELECT lo_oid FROM %s", table_name);
     
     int ret = SPI_exec(sql_buf.data, 0);
     if (ret == SPI_OK_SELECT) {
-        // 删除所有大对象
+        // Delete all large objects
         for (int i = 0; i < SPI_processed; i++) {
             HeapTuple tuple = SPI_tuptable->vals[i];
             bool isnull;
@@ -273,7 +307,7 @@ void execute_largeobject_clear_table(const char* table_name)
         }
     }
     
-    // 清空表
+    // Clear table
     pfree(sql_buf.data);
     initStringInfo(&sql_buf);
     appendStringInfo(&sql_buf, "DELETE FROM %s", table_name);
@@ -290,16 +324,16 @@ void execute_largeobject_clear_table(const char* table_name)
     SPI_finish();
 }
 
-
-void execute_largeobject_insert(const char* table_name, int key_value,
-                               const void* binary_data, size_t binary_size)
-{
+void PostgreSQLUtils::executeLargeObjectInsert(const char* table_name, int key_value,
+                                              const void* binary_data, size_t binary_size) {
+    std::lock_guard<std::mutex> lock(spi_mutex_);
+    
     if (SPI_connect() != SPI_OK_CONNECT) {
         ereport(ERROR, (errcode(ERRCODE_INTERNAL_ERROR),
                        errmsg("could not connect to SPI")));
     }
     
-    // 创建大对象
+    // Create large object
     Oid lo_oid = inv_create(INV_READ | INV_WRITE);
     if (lo_oid == InvalidOid) {
         SPI_finish();
@@ -307,7 +341,7 @@ void execute_largeobject_insert(const char* table_name, int key_value,
                        errmsg("lo_creat failed")));
     }
     
-    // 打开大对象
+    // Open large object
     LargeObjectDesc *lobj_desc = inv_open(lo_oid, INV_WRITE, CurrentMemoryContext);
     if (lobj_desc == NULL) {
         inv_drop(lo_oid);
@@ -316,7 +350,7 @@ void execute_largeobject_insert(const char* table_name, int key_value,
                        errmsg("lo_open failed")));
     }
     
-    // 写入数据
+    // Write data
     int nbytes = inv_write(lobj_desc, (char*)binary_data, binary_size);
     if (nbytes != binary_size) {
         inv_close(lobj_desc);
@@ -326,15 +360,15 @@ void execute_largeobject_insert(const char* table_name, int key_value,
                        errmsg("lo_write failed")));
     }
     
-    // 关闭大对象
+    // Close large object
     inv_close(lobj_desc);
     
-    // 插入记录
+    // Insert record
     StringInfoData sql_buf;
     initStringInfo(&sql_buf);
     appendStringInfo(&sql_buf, "INSERT INTO %s (key, lo_oid) VALUES ($1, $2)", table_name);
     
-    // 准备参数
+    // Prepare parameters
     Oid argtypes[2] = {INT4OID, OIDOID};
     Datum values[2];
     char nulls[2] = {' ', ' '};
@@ -342,7 +376,7 @@ void execute_largeobject_insert(const char* table_name, int key_value,
     values[0] = Int32GetDatum(key_value);
     values[1] = ObjectIdGetDatum(lo_oid);
     
-    // 准备并执行计划
+    // Prepare and execute plan
     SPIPlanPtr plan = SPI_prepare(sql_buf.data, 2, argtypes);
     if (plan == NULL) {
         inv_drop(lo_oid);
@@ -367,27 +401,28 @@ void execute_largeobject_insert(const char* table_name, int key_value,
     SPI_finish();
 }
 
-LargeObjectSelectResult* execute_largeobject_select_by_key(const char* table_name, int key_value)
-{
+LargeObjectSelectResult* PostgreSQLUtils::executeLargeObjectSelectByKey(const char* table_name, int key_value) {
+    std::lock_guard<std::mutex> lock(spi_mutex_);
+    
     if (SPI_connect() != SPI_OK_CONNECT) {
         ereport(ERROR, (errcode(ERRCODE_INTERNAL_ERROR),
                        errmsg("could not connect to SPI")));
     }
     
-    // 构建SELECT语句
+    // Build SELECT statement
     StringInfoData sql_buf;
     initStringInfo(&sql_buf);
     appendStringInfo(&sql_buf, "SELECT lo_oid FROM %s WHERE key = $1", table_name);
     
-    // 准备参数
+    // Prepare parameters
     Oid argtypes[1] = {INT4OID};
     Datum values[1];
     char nulls[1] = {' '};
     
-    // 设置键值参数
+    // Set key value parameter
     values[0] = Int32GetDatum(key_value);
     
-    // 准备并执行计划
+    // Prepare and execute plan
     SPIPlanPtr plan = SPI_prepare(sql_buf.data, 1, argtypes);
     if (plan == NULL) {
         pfree(sql_buf.data);
@@ -408,13 +443,13 @@ LargeObjectSelectResult* execute_largeobject_select_by_key(const char* table_nam
     LargeObjectSelectResult* result = NULL;
     
     if (SPI_processed > 0) {
-        // 使用SPI_palloc分配结果结构体
+        // Use SPI_palloc to allocate result struct
         result = (LargeObjectSelectResult*) SPI_palloc(sizeof(LargeObjectSelectResult));
         result->count = SPI_processed;
         result->data_array = (void**) SPI_palloc(result->count * sizeof(void*));
         result->size_array = (size_t*) SPI_palloc(result->count * sizeof(size_t));
         
-        // 读取每个大对象的数据
+        // Read data for each large object
         for (int i = 0; i < result->count; i++) {
             HeapTuple tuple = SPI_tuptable->vals[i];
             bool isnull;
@@ -423,7 +458,7 @@ LargeObjectSelectResult* execute_largeobject_select_by_key(const char* table_nam
             if (!isnull) {
                 Oid lo_oid = DatumGetObjectId(datum);
                 
-                // 打开大对象
+                // Open large object
                 LargeObjectDesc *lobj_desc = inv_open(lo_oid, INV_READ, CurrentMemoryContext);
                 if (lobj_desc == NULL) {
                     SPI_freeplan(plan);
@@ -433,7 +468,7 @@ LargeObjectSelectResult* execute_largeobject_select_by_key(const char* table_nam
                                    errmsg("lo_open failed for OID %u", lo_oid)));
                 }
                 
-                // 获取大对象大小
+                // Get large object size
                 int64 lo_size = inv_seek(lobj_desc, 0, SEEK_END);
                 inv_seek(lobj_desc, 0, SEEK_SET);
                 
@@ -446,7 +481,7 @@ LargeObjectSelectResult* execute_largeobject_select_by_key(const char* table_nam
                                    errmsg("lo_lseek64 failed for OID %u", lo_oid)));
                 }
                 
-                // 分配内存并读取数据
+                // Allocate memory and read data
                 result->size_array[i] = lo_size;
                 result->data_array[i] = SPI_palloc(lo_size);
                 
@@ -475,35 +510,36 @@ LargeObjectSelectResult* execute_largeobject_select_by_key(const char* table_nam
     return result;
 }
 
-void execute_binary_insert_dual_key(const char* table_name, int key1_value, int key2_value,
-                                   const void* binary_data, size_t binary_size)
-{
+void PostgreSQLUtils::executeBinaryInsertDualKey(const char* table_name, int key1_value, int key2_value,
+                                                const void* binary_data, size_t binary_size) {
+    std::lock_guard<std::mutex> lock(spi_mutex_);
+    
     if (SPI_connect() != SPI_OK_CONNECT) {
         ereport(ERROR, (errcode(ERRCODE_INTERNAL_ERROR),
                        errmsg("could not connect to SPI")));
     }
     
-    // 构建INSERT语句
+    // Build INSERT statement
     StringInfoData sql_buf;
     initStringInfo(&sql_buf);
     appendStringInfo(&sql_buf, "INSERT INTO %s (key1, key2, data) VALUES ($1, $2, $3)", table_name);
     
-    // 准备参数
+    // Prepare parameters
     Oid argtypes[3] = {INT4OID, INT4OID, BYTEAOID};
     Datum values[3];
     char nulls[3] = {' ', ' ', ' '};
     
-    // 设置键值参数
+    // Set key value parameters
     values[0] = Int32GetDatum(key1_value);
     values[1] = Int32GetDatum(key2_value);
     
-    // 设置二进制数据参数
+    // Set binary data parameter
     bytea *binary_bytea = (bytea *) palloc(VARHDRSZ + binary_size);
     SET_VARSIZE(binary_bytea, VARHDRSZ + binary_size);
     memcpy(VARDATA(binary_bytea), binary_data, binary_size);
     values[2] = PointerGetDatum(binary_bytea);
     
-    // 准备并执行计划
+    // Prepare and execute plan
     SPIPlanPtr plan = SPI_prepare(sql_buf.data, 3, argtypes);
     if (plan == NULL) {
         pfree(sql_buf.data);
@@ -526,37 +562,38 @@ void execute_binary_insert_dual_key(const char* table_name, int key1_value, int 
     SPI_finish();
 }
 
-void execute_binary_upsert_dual_key(const char* table_name, int key1_value, int key2_value,
-                                   const void* binary_data, size_t binary_size)
-{
+void PostgreSQLUtils::executeBinaryUpsertDualKey(const char* table_name, int key1_value, int key2_value,
+                                                const void* binary_data, size_t binary_size) {
+    std::lock_guard<std::mutex> lock(spi_mutex_);
+    
     if (SPI_connect() != SPI_OK_CONNECT) {
         ereport(ERROR, (errcode(ERRCODE_INTERNAL_ERROR),
                        errmsg("could not connect to SPI")));
     }
     
-    // 构建UPSERT语句 (INSERT ... ON CONFLICT ... DO UPDATE)
+    // Build UPSERT statement (INSERT ... ON CONFLICT ... DO UPDATE)
     StringInfoData sql_buf;
     initStringInfo(&sql_buf);
     appendStringInfo(&sql_buf, 
         "INSERT INTO %s (key1, key2, data) VALUES ($1, $2, $3) "
         "ON CONFLICT (key1, key2) DO UPDATE SET data = $3", table_name);
     
-    // 准备参数
+    // Prepare parameters
     Oid argtypes[3] = {INT4OID, INT4OID, BYTEAOID};
     Datum values[3];
     char nulls[3] = {' ', ' ', ' '};
     
-    // 设置键值参数
+    // Set key value parameters
     values[0] = Int32GetDatum(key1_value);
     values[1] = Int32GetDatum(key2_value);
     
-    // 设置二进制数据参数
+    // Set binary data parameter
     bytea *binary_bytea = (bytea *) palloc(VARHDRSZ + binary_size);
     SET_VARSIZE(binary_bytea, VARHDRSZ + binary_size);
     memcpy(VARDATA(binary_bytea), binary_data, binary_size);
     values[2] = PointerGetDatum(binary_bytea);
     
-    // 准备并执行计划
+    // Prepare and execute plan
     SPIPlanPtr plan = SPI_prepare(sql_buf.data, 3, argtypes);
     if (plan == NULL) {
         pfree(sql_buf.data);
@@ -579,28 +616,29 @@ void execute_binary_upsert_dual_key(const char* table_name, int key1_value, int 
     SPI_finish();
 }
 
-BinarySelectResult* execute_binary_select_by_dual_key(const char* table_name, int key1_value, int key2_value)
-{
+BinarySelectResult* PostgreSQLUtils::executeBinarySelectByDualKey(const char* table_name, int key1_value, int key2_value) {
+    std::lock_guard<std::mutex> lock(spi_mutex_);
+    
     if (SPI_connect() != SPI_OK_CONNECT) {
         ereport(ERROR, (errcode(ERRCODE_INTERNAL_ERROR),
                        errmsg("could not connect to SPI")));
     }
     
-    // 构建SELECT语句
+    // Build SELECT statement
     StringInfoData sql_buf;
     initStringInfo(&sql_buf);
     appendStringInfo(&sql_buf, "SELECT data FROM %s WHERE key1 = $1 AND key2 = $2", table_name);
     
-    // 准备参数
+    // Prepare parameters
     Oid argtypes[2] = {INT4OID, INT4OID};
     Datum values[2];
     char nulls[2] = {' ', ' '};
     
-    // 设置键值参数
+    // Set key value parameters
     values[0] = Int32GetDatum(key1_value);
     values[1] = Int32GetDatum(key2_value);
     
-    // 准备并执行计划
+    // Prepare and execute plan
     SPIPlanPtr plan = SPI_prepare(sql_buf.data, 2, argtypes);
     if (plan == NULL) {
         pfree(sql_buf.data);
@@ -621,7 +659,7 @@ BinarySelectResult* execute_binary_select_by_dual_key(const char* table_name, in
     BinarySelectResult* result = NULL;
     
     if (SPI_processed > 0) {
-        // 获取结果
+        // Get result
         HeapTuple tuple = SPI_tuptable->vals[0];
         TupleDesc tupdesc = SPI_tuptable->tupdesc;
         
@@ -632,17 +670,17 @@ BinarySelectResult* execute_binary_select_by_dual_key(const char* table_name, in
             bytea *binary_bytea = DatumGetByteaP(datum);
             size_t data_size = VARSIZE(binary_bytea) - VARHDRSZ;
             
-            // 使用SPI_palloc在调用者上下文中分配结构体
+            // Use SPI_palloc to allocate struct in caller context
             result = (BinarySelectResult*) SPI_palloc(sizeof(BinarySelectResult));
             result->size = data_size;
             
-            // 使用SPI_palloc在调用者上下文中分配数据内存
+            // Use SPI_palloc to allocate data memory in caller context
             result->data = SPI_palloc(data_size);
             memcpy(result->data, VARDATA(binary_bytea), data_size);
         }
     }
     
-    // 清理SPI资源
+    // Clean up SPI resources
     SPI_freeplan(plan);
     pfree(sql_buf.data);
     SPI_finish();
@@ -650,27 +688,28 @@ BinarySelectResult* execute_binary_select_by_dual_key(const char* table_name, in
     return result;
 }
 
-DualKeyBinarySelectResult* execute_binary_select_by_key1(const char* table_name, int key1_value)
-{
+DualKeyBinarySelectResult* PostgreSQLUtils::executeBinarySelectByKey1(const char* table_name, int key1_value) {
+    std::lock_guard<std::mutex> lock(spi_mutex_);
+    
     if (SPI_connect() != SPI_OK_CONNECT) {
         ereport(ERROR, (errcode(ERRCODE_INTERNAL_ERROR),
                        errmsg("could not connect to SPI")));
     }
     
-    // 构建SELECT语句
+    // Build SELECT statement
     StringInfoData sql_buf;
     initStringInfo(&sql_buf);
     appendStringInfo(&sql_buf, "SELECT key2, data FROM %s WHERE key1 = $1", table_name);
     
-    // 准备参数
+    // Prepare parameters
     Oid argtypes[1] = {INT4OID};
     Datum values[1];
     char nulls[1] = {' '};
     
-    // 设置键值参数
+    // Set key value parameter
     values[0] = Int32GetDatum(key1_value);
     
-    // 准备并执行计划
+    // Prepare and execute plan
     SPIPlanPtr plan = SPI_prepare(sql_buf.data, 1, argtypes);
     if (plan == NULL) {
         pfree(sql_buf.data);
@@ -691,11 +730,11 @@ DualKeyBinarySelectResult* execute_binary_select_by_key1(const char* table_name,
     DualKeyBinarySelectResult* result = NULL;
     
     if (SPI_processed > 0) {
-        // 使用SPI_palloc在调用者上下文中分配结构体
+        // Use SPI_palloc to allocate struct in caller context
         result = (DualKeyBinarySelectResult*) SPI_palloc(sizeof(DualKeyBinarySelectResult));
         result->count = SPI_processed;
         
-        // 使用SPI_palloc分配数组
+        // Use SPI_palloc to allocate arrays
         result->key1_array = (int*) SPI_palloc(result->count * sizeof(int));
         result->key2_array = (int*) SPI_palloc(result->count * sizeof(int));
         result->data_array = (void**) SPI_palloc(result->count * sizeof(void*));
@@ -706,19 +745,19 @@ DualKeyBinarySelectResult* execute_binary_select_by_key1(const char* table_name,
         for (int i = 0; i < result->count; i++) {
             HeapTuple tuple = SPI_tuptable->vals[i];
             
-            // 获取key2值
+            // Get key2 value
             bool isnull;
             Datum key2_datum = SPI_getbinval(tuple, tupdesc, 1, &isnull);
-            result->key1_array[i] = key1_value;  // key1都是相同的
+            result->key1_array[i] = key1_value;  // key1 is all the same
             result->key2_array[i] = DatumGetInt32(key2_datum);
             
-            // 获取二进制数据
+            // Get binary data
             Datum data_datum = SPI_getbinval(tuple, tupdesc, 2, &isnull);
             if (!isnull) {
                 bytea *binary_bytea = DatumGetByteaP(data_datum);
                 result->size_array[i] = VARSIZE(binary_bytea) - VARHDRSZ;
                 
-                // 使用SPI_palloc分配数据内存
+                // Use SPI_palloc to allocate data memory
                 result->data_array[i] = SPI_palloc(result->size_array[i]);
                 memcpy(result->data_array[i], VARDATA(binary_bytea), result->size_array[i]);
             } else {
@@ -735,14 +774,15 @@ DualKeyBinarySelectResult* execute_binary_select_by_key1(const char* table_name,
     return result;
 }
 
-DualKeyBinarySelectResult* execute_binary_select_all_dual_key(const char* table_name)
-{
+DualKeyBinarySelectResult* PostgreSQLUtils::executeBinarySelectAllDualKey(const char* table_name) {
+    std::lock_guard<std::mutex> lock(spi_mutex_);
+    
     if (SPI_connect() != SPI_OK_CONNECT) {
         ereport(ERROR, (errcode(ERRCODE_INTERNAL_ERROR),
                        errmsg("could not connect to SPI")));
     }
     
-    // 构建SELECT语句
+    // Build SELECT statement
     StringInfoData sql_buf;
     initStringInfo(&sql_buf);
     appendStringInfo(&sql_buf, "SELECT key1, key2, data FROM %s", table_name);
@@ -758,11 +798,11 @@ DualKeyBinarySelectResult* execute_binary_select_all_dual_key(const char* table_
     DualKeyBinarySelectResult* result = NULL;
     
     if (SPI_processed > 0) {
-        // 使用SPI_palloc在调用者上下文中分配结构体
+        // Use SPI_palloc to allocate struct in caller context
         result = (DualKeyBinarySelectResult*) SPI_palloc(sizeof(DualKeyBinarySelectResult));
         result->count = SPI_processed;
         
-        // 使用SPI_palloc分配数组
+        // Use SPI_palloc to allocate arrays
         result->key1_array = (int*) SPI_palloc(result->count * sizeof(int));
         result->key2_array = (int*) SPI_palloc(result->count * sizeof(int));
         result->data_array = (void**) SPI_palloc(result->count * sizeof(void*));
@@ -773,7 +813,7 @@ DualKeyBinarySelectResult* execute_binary_select_all_dual_key(const char* table_
         for (int i = 0; i < result->count; i++) {
             HeapTuple tuple = SPI_tuptable->vals[i];
             
-            // 获取key1和key2值
+            // Get key1 and key2 values
             bool isnull;
             Datum key1_datum = SPI_getbinval(tuple, tupdesc, 1, &isnull);
             result->key1_array[i] = DatumGetInt32(key1_datum);
@@ -781,13 +821,13 @@ DualKeyBinarySelectResult* execute_binary_select_all_dual_key(const char* table_
             Datum key2_datum = SPI_getbinval(tuple, tupdesc, 2, &isnull);
             result->key2_array[i] = DatumGetInt32(key2_datum);
             
-            // 获取二进制数据
+            // Get binary data
             Datum data_datum = SPI_getbinval(tuple, tupdesc, 3, &isnull);
             if (!isnull) {
                 bytea *binary_bytea = DatumGetByteaP(data_datum);
                 result->size_array[i] = VARSIZE(binary_bytea) - VARHDRSZ;
                 
-                // 使用SPI_palloc分配数据内存
+                // Use SPI_palloc to allocate data memory
                 result->data_array[i] = SPI_palloc(result->size_array[i]);
                 memcpy(result->data_array[i], VARDATA(binary_bytea), result->size_array[i]);
             } else {

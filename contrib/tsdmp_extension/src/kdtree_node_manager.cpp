@@ -143,18 +143,18 @@ std::vector<DBKdtreeNode> buildKdTree(std::vector<SpatioTemporalData>& points) {
 void KdTreeNodeManager::clearTable() {
     // 清理表中的数据
     std::string sql = "TRUNCATE TABLE " + std::string(TABLE_NAME) + ";";
-    execute_sql(sql.c_str());
+    pgutils.executeSQL(sql.c_str());
 }
 
 // 写入数据到数据库
 void KdTreeNodeManager::writeKdTreeNodesToDatabase(int key1, int key2, const std::vector<DBKdtreeNode>& dbNodes) {
     // 使用SPI接口插入双键二进制数据
-    execute_binary_insert_dual_key(TABLE_NAME, key1, key2, dbNodes.data(), dbNodes.size() * sizeof(DBKdtreeNode));
+    pgutils.executeBinaryInsertDualKey(TABLE_NAME, key1, key2, dbNodes.data(), dbNodes.size() * sizeof(DBKdtreeNode));
 }
 
 void KdTreeNodeManager::updateKdTreeNodesInDatabase(int key1, int key2, const std::vector<DBKdtreeNode>& updatedNodes) {
     // 使用SPI接口的UPSERT操作（INSERT ... ON CONFLICT ... DO UPDATE）
-    execute_binary_upsert_dual_key(TABLE_NAME, key1, key2, updatedNodes.data(), updatedNodes.size() * sizeof(DBKdtreeNode));
+    pgutils.executeBinaryUpsertDualKey(TABLE_NAME, key1, key2, updatedNodes.data(), updatedNodes.size() * sizeof(DBKdtreeNode));
 }
 
 
@@ -163,7 +163,7 @@ std::vector<DBKdtreeNode> KdTreeNodeManager::loadKdTreeNodesFromDatabase(int key
     std::vector<DBKdtreeNode> dbNodes;
 
     // 使用SPI接口查询双键二进制数据
-    BinarySelectResult* result = execute_binary_select_by_dual_key(TABLE_NAME, key1, key2);
+    BinarySelectResult* result = pgutils.executeBinarySelectByDualKey(TABLE_NAME, key1, key2);
     
     if (result == NULL) {
         throw std::runtime_error("Kdtree load two key empty");
@@ -204,7 +204,7 @@ std::unordered_map<int, std::unordered_map<int, std::vector<DBKdtreeNode>>> KdTr
         int key1 = keyPair.first;
         int key2 = keyPair.second;
 
-        BinarySelectResult* result = execute_binary_select_by_dual_key(TABLE_NAME, key1, key2);
+        BinarySelectResult* result = pgutils.executeBinarySelectByDualKey(TABLE_NAME, key1, key2);
         
         if (result != NULL) {
             size_t node_size = sizeof(DBKdtreeNode);
@@ -239,7 +239,7 @@ std::unordered_map<int, std::vector<DBKdtreeNode>> KdTreeNodeManager::loadKdTree
     std::unordered_map<int, std::vector<DBKdtreeNode>> key2NodeMap;
 
     // 使用SPI接口查询指定key1的所有记录
-    DualKeyBinarySelectResult* result = execute_binary_select_by_key1(TABLE_NAME, key1);
+    DualKeyBinarySelectResult* result = pgutils.executeBinarySelectByKey1(TABLE_NAME, key1);
     
     if (result == NULL) {
         throw std::runtime_error("Kdtree load one key empty");
@@ -288,7 +288,7 @@ std::unordered_map<int, std::unordered_map<int, std::vector<DBKdtreeNode>>> KdTr
     long long size_count = 0;
 
     // 使用SPI接口查询所有双键记录
-    DualKeyBinarySelectResult* result = execute_binary_select_all_dual_key(TABLE_NAME);
+    DualKeyBinarySelectResult* result = pgutils.executeBinarySelectAllDualKey(TABLE_NAME);
     
     if (result != NULL) {
         size_t node_size = sizeof(DBKdtreeNode);

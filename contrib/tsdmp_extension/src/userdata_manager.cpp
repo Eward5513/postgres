@@ -5,12 +5,12 @@
 void UserDataManager::clearTable() {
     // 清理表中的数据 (建表逻辑已移到SQL文件中)
     std::string sql = "TRUNCATE TABLE " + std::string(TABLE_NAME) + ";";
-    execute_sql(sql.c_str());
+    pgutils.executeSQL(sql.c_str());
 }
 // 一个key可能会对应多个大对象 是否需要待查
 void UserDataManager::writeDataToDatabase(int key, const std::vector<SpatioTemporalData>& data) {
     // 使用SPI接口插入大对象数据
-    execute_largeobject_insert(TABLE_NAME, key, data.data(), data.size() * sizeof(SpatioTemporalData));
+    pgutils.executeLargeObjectInsert(TABLE_NAME, key, data.data(), data.size() * sizeof(SpatioTemporalData));
 }
 
 std::vector<std::vector<SpatioTemporalData>> UserDataManager::loadDataFromDatabase(
@@ -18,7 +18,7 @@ std::vector<std::vector<SpatioTemporalData>> UserDataManager::loadDataFromDataba
     std::vector<std::vector<SpatioTemporalData>> data;
 
     // 使用SPI接口查询大对象数据
-    LargeObjectSelectResult* result = execute_largeobject_select_by_key(TABLE_NAME, key);
+    LargeObjectSelectResult* result = pgutils.executeLargeObjectSelectByKey(TABLE_NAME, key);
     
     if (result == NULL) {
         return data; // 没有找到数据，返回空的data

@@ -13,13 +13,13 @@ void OctreeNodeManager::clearTable() {
 
     // 清理表中的数据
     std::string sql = "TRUNCATE TABLE " + std::string(TABLE_NAME) + ";";
-    execute_sql(sql.c_str());
+    pgutils.executeSQL(sql.c_str());
 }
 
 // 写入数据到数据库
 void OctreeNodeManager::writeOctreeNodesToDatabase(int key, const std::vector<DBOctreeNode>& dbNodes) {
     // 使用SPI接口写入二进制数据
-    execute_binary_insert(TABLE_NAME, key, dbNodes.data(), dbNodes.size() * sizeof(DBOctreeNode));
+    pgutils.executeBinaryInsert(TABLE_NAME, key, dbNodes.data(), dbNodes.size() * sizeof(DBOctreeNode));
 }
 
 // 从数据库读取数据
@@ -27,7 +27,7 @@ std::vector<DBOctreeNode> OctreeNodeManager::loadOctreeNodesFromDatabase(int key
     std::vector<DBOctreeNode> dbNodes;
     
     // 使用SPI接口查询二进制数据
-    BinarySelectResult* result = execute_binary_select(TABLE_NAME, key);
+    BinarySelectResult* result = pgutils.executeBinarySelect(TABLE_NAME, key);
     if (result != NULL) {
         // 验证数据大小
         size_t node_size = sizeof(DBOctreeNode);
@@ -56,7 +56,7 @@ std::unordered_map<int, std::vector<DBOctreeNode>> OctreeNodeManager::loadAllOct
     std::unordered_map<int, std::vector<DBOctreeNode>> nodeMap;
     
     // 使用SPI接口查询所有二进制数据
-    BinarySelectAllResult* result = execute_binary_select_all(TABLE_NAME);
+    BinarySelectAllResult* result = pgutils.executeBinarySelectAll(TABLE_NAME);
     if (result != NULL) {
         for (int i = 0; i < result->count; i++) {
             int key = result->keys[i];

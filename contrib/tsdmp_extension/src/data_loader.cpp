@@ -469,6 +469,9 @@ Bounds DataLoader::calculate_bound_and_sampleing(const string &filename, file_id
     {
         auto meshid = fid;
         std::vector<std::vector<int32_t>> connections;
+        size_t vertex_count = 0;
+        size_t face_count = 0;
+        
         while (getline(file, line))
         {
             if (count++ >= max_point_limit)
@@ -490,6 +493,7 @@ Bounds DataLoader::calculate_bound_and_sampleing(const string &filename, file_id
             ss >> prefix;
             if (prefix == "v")
             {
+                vertex_count++;
                 float x, y, z;
                 uint8_t colorR;
                 uint8_t colorG;
@@ -505,6 +509,7 @@ Bounds DataLoader::calculate_bound_and_sampleing(const string &filename, file_id
             }
             else if (prefix == "f")
             {
+                face_count++;
                 int32_t number;
                 std::vector<int32_t> connection;
                 while (ss >> number)
@@ -514,6 +519,22 @@ Bounds DataLoader::calculate_bound_and_sampleing(const string &filename, file_id
                 connections.emplace_back(std::move(connection));
             }
         }
+        
+        // 记录.obj文件处理统计信息
+        std::string log_message = "INFO: OBJ file processed: " + filename + 
+                                 " - vertices=" + std::to_string(vertex_count) + 
+                                 ", faces=" + std::to_string(face_count) + 
+                                 ", connections=" + std::to_string(connections.size()) + 
+                                 ", meshid=" + std::to_string(meshid);
+        logger.log(log_message);
+        
+        // 如果连接数据很大，发出警告
+        if (connections.size() > 100000) {
+            std::string warning_message = "WARNING: Large mesh detected in " + filename + 
+                                        " - " + std::to_string(connections.size()) + " connections";
+            logger.log(warning_message);
+        }
+        
         MeshConnectionManager::writeDataToDatabase(meshid, connections);
     }
     if (buffer.size() > 0)
