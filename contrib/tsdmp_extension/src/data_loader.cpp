@@ -217,17 +217,17 @@ void DataLoader::build_index()
     if (0)
     { // validation
         dbNodes = OctreeNodeManager::loadOctreeNodesFromDatabase(-1);
-        std::cout << "dbNodes:" << dbNodes.size() << std::endl;
+        logger.log("INFO: dbNodes: " + std::to_string(dbNodes.size()));
         if (validateConversion(root, dbNodes, 0))
         {
-            std::cout << "Validation passed: The structures are consistent.\n";
+            logger.log("INFO: Validation passed: The structures are consistent.");
         }
         else
         {
-            std::cout << "Validation failed: The structures are not consistent.\n";
+            logger.log("ERROR: Validation failed: The structures are not consistent.");
         }
     }
-    std::cout << "create chunk time: " << tc.second() << std::endl;
+    logger.log("INFO: create chunk time: " + std::to_string(tc.second()) + "s");
     delete root;
 }
 
@@ -855,16 +855,16 @@ OctreeNode *building_octree_bottom_up_top_down(Bounds bounds)
     {
         count_sample += i;
     }
-    std::cout << "prepare:" << count_sample << std::endl;
-    std::cout << "build_util.sample_cell_num_in_diff_level:" << build_util.sample_cell_num_in_diff_level.size() << std::endl;
-    std::cout << "build_util.cell_num_in_diff_level:" << build_util.cell_num_in_diff_level.size() << std::endl;
+    logger.log("INFO: prepare: " + std::to_string(count_sample));
+    logger.log("INFO: build_util.sample_cell_num_in_diff_level: " + std::to_string(build_util.sample_cell_num_in_diff_level.size()));
+    logger.log("INFO: build_util.cell_num_in_diff_level: " + std::to_string(build_util.cell_num_in_diff_level.size()));
 
     clear_folder(data_dir + "/chunk_data");
     auto root = build_util.build_chunk_node_sample(bounds, 0, 0, 0, 0);//build chunk
     build_util.do_indexing_thread_pool.wait_for_all_tasks();
-    std::cout << "chunk node count:" << build_util.node_count << std::endl;
-    std::cout << "split sample size:" << build_util.split_sample_count << std::endl;
-    std::cout << "sample file point position:" << build_util.sample_file.tellg() / sizeof(SpatioTemporalData) << std::endl;
+    logger.log("INFO: chunk node count: " + std::to_string(build_util.node_count));
+    logger.log("INFO: split sample size: " + std::to_string(build_util.split_sample_count));
+    logger.log("INFO: sample file point position: " + std::to_string(build_util.sample_file.tellg() / sizeof(SpatioTemporalData)));
     return root;
 }
 
@@ -1238,12 +1238,12 @@ void BuildChunk::load_sample_size()
         sampleFile.seekg(0, std::ios::beg);
         if (fileSize % sizeof(uint32_t) != 0)
         {
-            throw std::runtime_error("数据文件大小异常");
+            throw std::runtime_error("Data file size exception");
         }
         std::size_t numElements = fileSize / sizeof(uint32_t);
         if (numElements != sampleCellNums)
         {
-            throw std::runtime_error("数据个数异常");
+            throw std::runtime_error("Data count exception");
         }
         sampleCells.resize(numElements);
         sampleFile.read(reinterpret_cast<char *>(sampleCells.data()), fileSize);
@@ -1257,7 +1257,7 @@ void BuildChunk::load_sample_size()
     std::streamsize fileSize = sample_file.tellg();
     sample_size = fileSize / sizeof(SpatioTemporalData);
     sample_all_size = sample_size;
-    std::cout << "样本文件大小:" << sample_size << std::endl;
+    logger.log("INFO: sample file size: " + std::to_string(sample_size));
     sample_file.seekg(0, std::ios::beg);
 
     auto copied_sampleCells = sampleCells;
@@ -1281,42 +1281,145 @@ void BuildChunk::load_sample_size()
             count += mergedValue;
             mergedCells[i] = mergedValue;
         }
-        std::cout << newSize << "======" << count << std::endl;
+        logger.log("INFO: level size: " + std::to_string(newSize) + " count: " + std::to_string(count));
         copied_sampleCells = std::move(mergedCells);
     }
     std::reverse(sample_cell_num_in_diff_level.begin(), sample_cell_num_in_diff_level.end());
 }
 
-void BuildChunk::split_original_data(Bounds bounds, uint64_t level, uint64_t x, uint64_t y, uint64_t z)
-{
-    auto id = node_count++;
-    uint64_t cell_id = interleaveBits(x, y, z,chunk_max_level);
-    auto pointCount = sample_cell_num_in_diff_level[level][cell_id];
-    if (pointCount <= max_point_per_chunk || level >= chunk_max_level)
-    {
-        // original data
-        int64_t chunk_original_data_size = cell_num_in_diff_level[level][cell_id];
-        std::vector<SpatioTemporalData> chunk_data(chunk_original_data_size);
-        original_file.read(reinterpret_cast<char *>(chunk_data.data()), chunk_original_data_size * sizeof(SpatioTemporalData));
-        // std::ofstream file("./chunk_original_data/chunk_data_" + std::to_string(id) + ".bin", std::ios::binary);
-        // int64_t remaining = chunk_original_data_size;
-        // while (remaining > 0)
-        // {
-        //     size_t to_read = std::min(static_cast<int64_t>(buffer_size), remaining);
+// void BuildChunk::split_original_data(Bounds bounds, uint64_t level, uint64_t x, uint64_t y, uint64_t z)
+// {
+//     auto id = node_count++;
+//     uint64_t cell_id = interleaveBits(x, y, z,chunk_max_level);
+//     auto pointCount = sample_cell_num_in_diff_level[level][cell_id];
+//     if (pointCount <= max_point_per_chunk || level >= chunk_max_level)
+//     {
+//         // original data
+//         int64_t chunk_original_data_size = cell_num_in_diff_level[level][cell_id];
+//         std::vector<SpatioTemporalData> chunk_data(chunk_original_data_size);
+//         original_file.read(reinterpret_cast<char *>(chunk_data.data()), chunk_original_data_size * sizeof(SpatioTemporalData));
+//         // std::ofstream file("./chunk_original_data/chunk_data_" + std::to_string(id) + ".bin", std::ios::binary);
+//         // int64_t remaining = chunk_original_data_size;
+//         // while (remaining > 0)
+//         // {
+//         //     size_t to_read = std::min(static_cast<int64_t>(buffer_size), remaining);
             
-        //     file.write(reinterpret_cast<char *>(buffer.data()), to_read * sizeof(SpatioTemporalData));
-        //     remaining -= to_read;
-        //     split_original_count += to_read;
-        // }
-        // file.close();
-        do_indexing_thread_pool.post_task(
-            [chunk_data = std::move(chunk_data),id](){
-                chunk_original_data_to_db(id, chunk_data);
-            }
-        );
-        do_indexing_thread_pool.wait_for_all_tasks(max_concurrent_task_across_chunk * 2);
-        std::cout << " leaf info: " << " id:" << id << " level:" << level << " x:" << x << " y:" << y << " z:" << z << " size:" << chunk_original_data_size << std::endl;
+//         //     file.write(reinterpret_cast<char *>(buffer.data()), to_read * sizeof(SpatioTemporalData));
+//         //     remaining -= to_read;
+//         //     split_original_count += to_read;
+//         // }
+//         // file.close();
+//         do_indexing_thread_pool.post_task(
+//             [chunk_data = std::move(chunk_data),id](){
+//                 chunk_original_data_to_db(id, chunk_data);
+//             }
+//         );
+//         do_indexing_thread_pool.wait_for_all_tasks(max_concurrent_task_across_chunk * 2);
+//         std::cout << " leaf info: " << " id:" << id << " level:" << level << " x:" << x << " y:" << y << " z:" << z << " size:" << chunk_original_data_size << std::endl;
+//         return;
+//     }
+//     for (int i = 0; i < 8; ++i)
+//     {
+//         int bitx = (i >> 0) & 1;
+//         int bity = (i >> 1) & 1;
+//         int bitz = (i >> 2) & 1;
+//         int new_x = (x << 1) | bitx;
+//         int new_y = (y << 1) | bity;
+//         int new_z = (z << 1) | bitz;
+//         auto center = bounds.getCenter();
+//         Bounds sub_bound = bounds;
+//         if (bitx == 0)
+//         {
+//             sub_bound.max.x = center.x;
+//         }
+//         else
+//         {
+//             sub_bound.min.x = center.x;
+//         }
+//         if (bity == 0)
+//         {
+//             sub_bound.max.y = center.y;
+//         }
+//         else
+//         {
+//             sub_bound.min.y = center.y;
+//         }
+
+//         if (bitz == 0)
+//         {
+//             sub_bound.max.z = center.z;
+//         }
+//         else
+//         {
+//             sub_bound.min.z = center.z;
+//         }
+//         split_original_data(sub_bound, level + 1, new_x, new_y, new_z);
+//     }
+// }
+
+void doIndexing(Bounds bound, int chunk_id, std::vector<SpatioTemporalData> data, int octree_max_level, int max_point_per_leaf, int leaf_num)
+{
+    TimerClock tc;
+    OctreeBuilder octree_builder(max_point_per_leaf);
+    octree_builder.dataPoints = std::move(data);
+    if (octree_builder.dataPoints.size() == 0)
+    {
+        std::vector<DBOctreeNode> dbNodes(1);
+        dbNodes[0].bound = bound.to_spatial_bound();
+        dbNodes[0].is_leaf = true;
+        dbNodes[0].id = 0;
+        dbNodes[0].oc_id = chunk_id;
+        dbNodes[0].kd_id = 0;
+        OctreeNodeManager::writeOctreeNodesToDatabase(chunk_id, dbNodes);
+        auto tree = std::vector<DBKdtreeNode>(0);
+        BinaryKVStorage bs(data_dir+"/kdtree");
+        // KdTreeNodeManager::writeKdTreeNodesToDatabase(chunk_id, dbNodes[0].id, tree);
+        bs.write("kd_"+std::to_string(chunk_id)+"_"+std::to_string(dbNodes[0].id),tree);
+        // 建立这里的原因是防止采样数据没有采样到，但是原始数据里面又这样的数据而报错
         return;
+    }
+    index_loading_num += octree_builder.dataPoints.size();
+    tc.tick();
+    OctreeNode *octree_root = octree_builder.buildOctree(bound);//memory pointer
+    encode_Octree(octree_root);
+    std::vector<DBOctreeNode> dbNodes = convertOctreeToDB(octree_root, chunk_id);//pointer to vector
+    OctreeNodeManager::writeOctreeNodesToDatabase(chunk_id, dbNodes);
+    tc.tick();
+    vector<OctreeNode *> leafVector;
+    getLeafNodes(octree_root, leafVector);
+    tc.tick();
+    para_createTreeWithLeafNode(chunk_id, octree_builder.dataPoints, leafVector);
+    ++finihsed_octree;
+    // std::cout << "build in chunk:" << finihsed_octree << ":" << leaf_num << "\r";
+    delete octree_root;
+}
+
+OctreeNode *BuildChunk::build_chunk_node_sample(Bounds bounds, uint64_t level, uint64_t x, uint64_t y, uint64_t z)
+{
+    uint64_t cell_id = interleaveBits(x, y, z,chunk_max_level);
+    OctreeNode *node = new OctreeNode(bounds, level);
+    node->id = node_count++;
+    node->pointCount = sample_cell_num_in_diff_level[level][cell_id];
+    if (node->pointCount <= max_point_per_chunk || level >= chunk_max_level)
+    {
+        node->is_leaf = true;
+        {
+            std::vector<SpatioTemporalData> chunk_data(node->pointCount);
+            sample_file.read(reinterpret_cast<char *>(chunk_data.data()), node->pointCount * sizeof(SpatioTemporalData));
+            split_sample_count += node->pointCount;
+            // Comment out parallel implementation and use serial instead
+            // do_indexing_thread_pool.post_task(
+            //     [chunk_data = std::move(chunk_data),bound=node->bound,chunk_id = node->id](){
+            //         doIndexing(bound,chunk_id,std::move(chunk_data),octree_max_level, max_point_per_leaf,-1);
+            //     }
+            // );
+            // do_indexing_thread_pool.wait_for_all_tasks(max_concurrent_task_across_chunk * 2);
+            
+            // Serial implementation
+            doIndexing(node->bound, node->id, std::move(chunk_data), octree_max_level, max_point_per_leaf, -1);
+        }
+        logger.log("INFO: leaf info: id:" + std::to_string(node->id) + " level:" + std::to_string(level) + " x:" + std::to_string(x) + " y:" + std::to_string(y) + " z:" + std::to_string(z) + " size:" + std::to_string(node->pointCount));
+        return node;
     }
     for (int i = 0; i < 8; ++i)
     {
@@ -1353,8 +1456,9 @@ void BuildChunk::split_original_data(Bounds bounds, uint64_t level, uint64_t x, 
         {
             sub_bound.min.z = center.z;
         }
-        split_original_data(sub_bound, level + 1, new_x, new_y, new_z);
+        node->children[i] = build_chunk_node_sample(sub_bound, level + 1, new_x, new_y, new_z);
     }
+    return node;
 }
 
 void split_data(int id,std::vector<DBOctreeNode> &nodes, std::vector<SpatioTemporalData> &data,std::unordered_map<int,std::vector<SpatioTemporalData>> &result) {
@@ -1378,7 +1482,7 @@ void split_data(int id,std::vector<DBOctreeNode> &nodes, std::vector<SpatioTempo
     for(int i = 0;i<8;++i){
         if(node.children[i] == -1){
             if(sub_data[i].size() > 0){
-                std::cerr<<"这里出现的原因是采样点没有，但是原始数据有"<<std::endl;
+                logger.log("ERROR: This occurs because there are no sample points but original data exists");
             }
             continue;
         }
@@ -1425,7 +1529,7 @@ void chunk_original_data_to_db(int chunk_id, std::vector<SpatioTemporalData> all
 //         size_t file_size = original_file.tellg();
 //         original_file.seekg(0, std::ios::beg);
 //         data_count = file_size / sizeof(SpatioTemporalData);
-//         std::cout <<"leaf_node.id:"<<leaf_node.id<<"  data_count:"<<data_count<< std::endl;
+//         logger.log("INFO: leaf_node.id:" + std::to_string(leaf_node.id) + "  data_count:" + std::to_string(data_count));
 //         all_data.resize(data_count);
 //         original_file.read(reinterpret_cast<char *>(all_data.data()), file_size);
 //         original_file.close();
@@ -1465,12 +1569,12 @@ void BuildChunk::load_original_and_sample_size(){
         originalFile.seekg(0, std::ios::beg);
         if (fileSize % sizeof(uint64_t) != 0)
         {
-            throw std::runtime_error("数据文件大小异常");
+            throw std::runtime_error("Data file size exception");
         }
         std::size_t numElements = fileSize / sizeof(uint64_t);
         if (numElements != sampleCellNums)
         {
-            throw std::runtime_error("数据文件大小异常");
+            throw std::runtime_error("Data file size exception");
         }
         originalCells.resize(numElements);
         originalFile.read(reinterpret_cast<char *>(originalCells.data()), fileSize);
@@ -1483,12 +1587,12 @@ void BuildChunk::load_original_and_sample_size(){
         sampleFile.seekg(0, std::ios::beg);
         if (fileSize % sizeof(uint32_t) != 0)
         {
-            throw std::runtime_error("数据文件大小异常");
+            throw std::runtime_error("Data file size exception");
         }
         std::size_t numElements = fileSize / sizeof(uint32_t);
         if (numElements != sampleCellNums)
         {
-            throw std::runtime_error("数据文件大小异常");
+            throw std::runtime_error("Data file size exception");
         }
         sampleCells.resize(numElements);
         sampleFile.read(reinterpret_cast<char *>(sampleCells.data()), fileSize);
@@ -1502,7 +1606,7 @@ void BuildChunk::load_original_and_sample_size(){
     std::streamsize fileSize = sample_file.tellg();
     sample_size = fileSize / sizeof(SpatioTemporalData);
     sample_all_size = sample_size;
-    std::cout << "样本文件大小:" << sample_size << std::endl;
+    logger.log("INFO: sample file size: " + std::to_string(sample_size));
     sample_file.seekg(0, std::ios::beg);
 
     original_file = std::ifstream(data_dir +"/original_data/all_data.bin", std::ios::binary);
@@ -1510,7 +1614,7 @@ void BuildChunk::load_original_and_sample_size(){
     fileSize = original_file.tellg();
     sample_size = fileSize / sizeof(SpatioTemporalData);
     original_all_size = sample_size;
-    std::cout << "数据文件大小:" << sample_size << std::endl;
+    logger.log("INFO: data file size: " + std::to_string(sample_size));
     original_file.seekg(0, std::ios::beg);
 
     auto copied_sampleCells = sampleCells;
@@ -1534,7 +1638,7 @@ void BuildChunk::load_original_and_sample_size(){
             count += mergedValue;
             mergedCells[i] = mergedValue;
         }
-        std::cout << newSize << "======" << count << std::endl;
+        logger.log("INFO: sample level size: " + std::to_string(newSize) + " count: " + std::to_string(count));
         copied_sampleCells = std::move(mergedCells);
     }
     auto copied_originalCells = originalCells;
@@ -1558,7 +1662,7 @@ void BuildChunk::load_original_and_sample_size(){
             count += mergedValue;
             mergedCells[i] = mergedValue;
         }
-        std::cout << newSize << "======" << count << std::endl;
+        logger.log("INFO: original level size: " + std::to_string(newSize) + " count: " + std::to_string(count));
         copied_originalCells = std::move(mergedCells);
     }
 

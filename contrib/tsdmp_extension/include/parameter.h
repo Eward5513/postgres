@@ -13,6 +13,7 @@ inline int max_concurrent_task_across_chunk = 40;
 
 inline int chunk_max_level = 6;
 inline int max_point_per_chunk = 100000;
+inline int octree_max_level = 12;
 
 inline std::string data_dir = "/home/zyl/zhangteng/TSDMP_buffer/data_buffer";
 
@@ -21,6 +22,7 @@ typedef std::int32_t file_id_t;
 typedef std::int32_t point_id_t;
 typedef std::int16_t foreign_key_id_t;
 typedef float point_time_t;
+inline int max_point_per_leaf = 400;
 
 // Global variables
 inline int max_point_limit = 1e6;
