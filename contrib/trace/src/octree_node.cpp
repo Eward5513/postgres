@@ -3,6 +3,13 @@
 #include <fstream>
 #include <stdexcept>
 #include <cmath>
+#include <queue>
+#include "../include/octree_node_manager.h"
+
+extern "C" {
+    #include "postgres.h"
+    #include "utils/elog.h"
+}
 
 // Default constructor
 OctreeNode::OctreeNode() : id(-1), pointCount(0), level(0), is_leaf(false) {}
@@ -196,6 +203,7 @@ void getLeafNodes(OctreeNode* node, std::vector< OctreeNode*>& leaves) {
 }
 
  std::vector<DBOctreeNode> convertOctreeToDB(OctreeNode* root,int chunk_id) {
+    elog(INFO, "convertOctreeToDB");
     std::vector<OctreeNode*> all_nodes;
     getAllNodes(root,all_nodes);
     std::vector<DBOctreeNode> dbNodes;
@@ -245,3 +253,37 @@ bool validateConversion(const OctreeNode* originalNode, const std::vector<DBOctr
 
     return true;
 }
+
+ void getAllNodes(OctreeNode* node, std::vector< OctreeNode*>& nodes) {
+    if (!node) return;
+    nodes.push_back(node); // Add current node to the list
+    for (int i = 0; i < 8; ++i) {
+        getAllNodes(node->children[i], nodes); // Recursively add children
+    }
+}
+
+
+void encode_Octree(OctreeNode *node)
+{
+    int node_count = 0;
+    std::queue<OctreeNode *> routes;
+    routes.push(node);
+    while (!routes.empty())
+    {
+        node = routes.front();
+        routes.pop();
+        node->id = node_count++;
+        for (auto &child : node->children)
+        {
+            if (child)
+            {
+                routes.push(child);
+            }
+        }
+    }
+}
+
+// OctreePointQuery::OctreePointQuery()
+// {
+//     chunk_tree = octreeNodeManager.loadOctreeNodesFromDatabase(-1);
+// }

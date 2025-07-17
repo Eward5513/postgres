@@ -13,7 +13,7 @@
 #include "nlohmann/json.hpp"
 
 // 项目头文件
-#include "../include/tsdmp.h"
+#include "../include/trace.h"
 #include "../include/parameter.h"
 #include "../include/data_loader.h"
 #include "../include/pgutils.h"
@@ -28,7 +28,7 @@ using std::ifstream;
 
 // Implementation of utility functions declared in tsdmp.h
 
-namespace tsdmp {
+namespace trace {
 
 // Memory management functions
 void* palloc_in_context(Size size, MemoryContext context)
@@ -119,14 +119,14 @@ Oid get_type_oid(const char* type_name)
     return InvalidOid;
 }
 
-TupleDesc tsdmp_TypeGetTupleDesc(Oid type_oid, List* coldeflist)
+TupleDesc trace_TypeGetTupleDesc(Oid type_oid, List* coldeflist)
 {
     // TODO: Implement tuple descriptor creation
     return NULL;
 }
 
 // Error handling
-void tsdmp_error(const char* fmt, ...)
+void trace_error(const char* fmt, ...)
 {
     va_list args;
     va_start(args, fmt);
@@ -139,7 +139,7 @@ void tsdmp_error(const char* fmt, ...)
     ereport(ERROR, (errcode(ERRCODE_INTERNAL_ERROR), errmsg("%s", buffer)));
 }
 
-void tsdmp_warning(const char* fmt, ...)
+void trace_warning(const char* fmt, ...)
 {
     va_list args;
     va_start(args, fmt);
@@ -152,7 +152,7 @@ void tsdmp_warning(const char* fmt, ...)
     ereport(WARNING, (errmsg("%s", buffer)));
 }
 
-void tsdmp_info(const char* fmt, ...)
+void trace_info(const char* fmt, ...)
 {
     va_list args;
     va_start(args, fmt);
@@ -240,7 +240,7 @@ HeapTuple create_knn_result_tuple(const KnnResult& result, TupleDesc tupdesc)
     return heap_form_tuple(tupdesc, values, nulls);
 }
 
-} // namespace tsdmp
+} // namespace trace
 
 // Main implementation functions called by extension.cpp
 
@@ -255,7 +255,7 @@ void initialize_config()
 }
 
 // Data loading implementation
-LoadResult tsdmp_load_data_impl(const std::string& directory, 
+LoadResult trace_load_data_impl(const std::string& directory, 
                                int max_file_num, float sample_ratio)
 {
     LoadResult result = {0};
@@ -293,7 +293,7 @@ LoadResult tsdmp_load_data_impl(const std::string& directory,
 }
 
 // Index building implementation
-IndexResult tsdmp_build_index_impl(int chunk_max_level, int octree_max_level, int max_point_per_leaf)
+IndexResult trace_build_index_impl(int chunk_max_level, int octree_max_level, int max_point_per_leaf)
 {
     IndexResult result = {0};
     
@@ -319,7 +319,7 @@ IndexResult tsdmp_build_index_impl(int chunk_max_level, int octree_max_level, in
 }
 
 // Range query implementation
-std::vector<SimplePoint> tsdmp_range_query_impl(const SimpleBounds& bounds, int data_type_mask)
+std::vector<SimplePoint> trace_range_query_impl(const SimpleBounds& bounds, int data_type_mask)
 {
     std::vector<SimplePoint> results;
     
@@ -337,7 +337,7 @@ std::vector<SimplePoint> tsdmp_range_query_impl(const SimpleBounds& bounds, int 
         point.y = bounds.min_y + (bounds.max_y - bounds.min_y) * 0.5f;
         point.z = bounds.min_z + (bounds.max_z - bounds.min_z) * 0.5f;
         point.time = bounds.min_time + (bounds.max_time - bounds.min_time) * 0.5f;
-        point.data_type = data_type_mask & TSDMP_TYPE_POINTCLOUD;
+        point.data_type = data_type_mask & TRACE_TYPE_POINTCLOUD;
         point.fid = i;
         point.pid = i * 100;
         point.foreign_key = i;
@@ -349,7 +349,7 @@ std::vector<SimplePoint> tsdmp_range_query_impl(const SimpleBounds& bounds, int 
 }
 
 // kNN query implementation
-std::vector<std::pair<SimplePoint, float>> tsdmp_knn_query_impl(const SimplePoint& center, int k, 
+std::vector<std::pair<SimplePoint, float>> trace_knn_query_impl(const SimplePoint& center, int k, 
                                                                 float min_time, float max_time, 
                                                                 int data_type_mask)
 {
@@ -368,7 +368,7 @@ std::vector<std::pair<SimplePoint, float>> tsdmp_knn_query_impl(const SimplePoin
         point.y = center.y + i * 0.1f;
         point.z = center.z + i * 0.1f;
         point.time = (min_time + max_time) * 0.5f;
-        point.data_type = data_type_mask & TSDMP_TYPE_POINTCLOUD;
+        point.data_type = data_type_mask & TRACE_TYPE_POINTCLOUD;
         point.fid = i;
         point.pid = i * 100;
         point.foreign_key = i;
@@ -382,13 +382,13 @@ std::vector<std::pair<SimplePoint, float>> tsdmp_knn_query_impl(const SimplePoin
 }
 
 // Configuration management implementations
-void tsdmp_set_config_impl(const std::string& key, const std::string& value)
+void trace_set_config_impl(const std::string& key, const std::string& value)
 {
     config_map[key] = value;
     elog(DEBUG1, "Config set: %s = %s", key.c_str(), value.c_str());
 }
 
-std::string tsdmp_get_config_impl(const std::string& key)
+std::string trace_get_config_impl(const std::string& key)
 {
     auto it = config_map.find(key);
     if (it != config_map.end()) {
@@ -398,7 +398,7 @@ std::string tsdmp_get_config_impl(const std::string& key)
 }
 
 // Data clearing implementation
-bool tsdmp_clear_data_impl()
+bool trace_clear_data_impl()
 {
     // Clear all data structures
     data_source_files.clear();
@@ -415,7 +415,7 @@ bool tsdmp_clear_data_impl()
 }
 
 // Statistics implementation
-StatsResult tsdmp_get_stats_impl()
+StatsResult trace_get_stats_impl()
 {
     StatsResult stats;
     

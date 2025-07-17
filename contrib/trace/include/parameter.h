@@ -1,5 +1,5 @@
-#ifndef TSDMP_PARAMETER_H
-#define TSDMP_PARAMETER_H
+#ifndef TRACE_PARAMETER_H
+#define TRACE_PARAMETER_H
 
 #include <string>
 #include <cstdint>
@@ -10,12 +10,15 @@
 inline int max_concurrent_tasks_for_read_bound_task = 80;
 inline int max_concurrent_tasks_for_count_task = 80;
 inline int max_concurrent_task_across_chunk = 40;
+inline int max_concurrent_task_inside_chunk = 4;
+
+// inline int tran_data_to_db_thread_pool_size = 25;
 
 inline int chunk_max_level = 6;
 inline int max_point_per_chunk = 100000;
 inline int octree_max_level = 12;
 
-inline std::string data_dir = "/home/zyl/zhangteng/TSDMP_buffer/data_buffer";
+inline std::string data_dir = "/home/zyl/zhangteng/TRACE_buffer/data_buffer";
 
 typedef std::int16_t user_id_t;
 typedef std::int32_t file_id_t;
@@ -27,4 +30,4 @@ inline int max_point_per_leaf = 400;
 // Global variables
 inline int max_point_limit = 1e6;
 
-#endif // TSDMP_PARAMETER_H
+#endif // TRACE_PARAMETER_H

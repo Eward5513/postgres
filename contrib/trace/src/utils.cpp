@@ -8,7 +8,6 @@
 namespace fs = std::filesystem;
 
 
-
 ContinuousRandomGenerator::ContinuousRandomGenerator(float min, float max)
     : gen(rd()), dist(min, max) {}
 

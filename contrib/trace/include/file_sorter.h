@@ -1,5 +1,5 @@
-#ifndef TSDMP_FILE_SORTER_H
-#define TSDMP_FILE_SORTER_H
+#ifndef TRACE_FILE_SORTER_H
+#define TRACE_FILE_SORTER_H
 
 #include <string>
 #include <vector>
@@ -20,4 +20,4 @@ private:
     static int extractNumber(const std::string& filename);
 };
 
-#endif // TSDMP_FILE_SORTER_H 
+#endif // TRACE_FILE_SORTER_H 

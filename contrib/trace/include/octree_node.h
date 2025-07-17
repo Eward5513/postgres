@@ -7,6 +7,9 @@
 #include <unordered_map>
 #include "spatiotemporal_data.h"
 
+// Forward declaration
+class OctreeNodeManager;
+
 struct OctreeNode {
     Bounds bound;                              // Bounding box of the node
     std::vector<int> points;                   // Indices of Points contained in this node
@@ -45,6 +48,8 @@ struct OctreeNode {
 // Function to recursively collect all nodes
  void getAllNodes(OctreeNode* node, std::vector< OctreeNode*>& nodes);
 
+// Function to encode octree nodes with sequential IDs
+ void encode_Octree(OctreeNode* node);
 
  struct DBOctreeNode {
     SpatialBounds bound;                             
@@ -60,5 +65,49 @@ struct OctreeNode {
  void split_data(int id,std::vector<DBOctreeNode> &nodes, std::vector<SpatioTemporalData> &data,std::unordered_map<int,std::vector<SpatioTemporalData>> &result);
  std::vector<DBOctreeNode> convertOctreeToDB(OctreeNode* root,int chunk_id=-1);
  bool validateConversion(const OctreeNode* originalNode, const std::vector<DBOctreeNode>& dbNodes, int dbIndex);
+
+ inline DBOctreeNode point_query_on_octree(const std::vector<DBOctreeNode> &chunk_tree, const SpatioTemporalData &point)
+ {
+     DBOctreeNode node = chunk_tree[0];
+     while (!node.is_leaf)
+     {
+         const auto center = node.bound.getCenter();
+         int son_id = 0;
+         if (point.x < center.x)
+         {
+         }
+         else
+         {
+             son_id |= 1;
+         }
+         if (point.y < center.y)
+         {
+         }
+         else
+         {
+             son_id |= 2;
+         }
+         if (point.z < center.z)
+         {
+         }
+         else
+         {
+             son_id |= 4;
+         }
+         node = chunk_tree[node.children[son_id]];
+     }
+     return node;
+ }
+
+ class OctreePointQuery
+ {
+ public:
+     std::vector<DBOctreeNode> chunk_tree;
+     OctreePointQuery(std::vector<DBOctreeNode> &dbNodes) : chunk_tree(dbNodes) {}
+     DBOctreeNode point_query_octree(const SpatioTemporalData &point) const
+     {
+         return point_query_on_octree(chunk_tree, point);
+     }
+ };
 
  #endif // OCTREENODE_H

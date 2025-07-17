@@ -1,7 +1,0 @@
-# tsdmp extension control file
-comment = 'Time-Spatial Data Management Platform - Advanced spatiotemporal data indexing and querying'
-default_version = '1.0'
-module_pathname = '$libdir/tsdmp'
-relocatable = true
-superuser = false
-trusted = false 

@@ -1,4 +1,4 @@
--- TSDMP Extension SQL Definition File
+-- TRACE Extension SQL Definition File
 -- Version 1.0
 
 -- 创建自定义数据类型
@@ -89,38 +89,38 @@ CREATE TABLE IF NOT EXISTS original_data (
 -- 函数声明
 
 -- 数据加载函数
-CREATE OR REPLACE FUNCTION tsdmp_load_data(
+CREATE OR REPLACE FUNCTION trace_load_data(
     source_directory TEXT,
     max_file_num INTEGER DEFAULT 200,
     sample_ratio REAL DEFAULT 0.1
 ) 
 RETURNS load_result
-AS 'MODULE_PATHNAME', 'tsdmp_load_data'
+AS 'MODULE_PATHNAME', 'trace_load_data'
 LANGUAGE C STRICT;
 
 -- 索引构建函数
-CREATE OR REPLACE FUNCTION tsdmp_build_index(
+CREATE OR REPLACE FUNCTION trace_build_index(
     chunk_max_level INTEGER DEFAULT 6,
     octree_max_level INTEGER DEFAULT 12,
     max_point_per_leaf INTEGER DEFAULT 400
 )
 RETURNS index_result
-AS 'MODULE_PATHNAME', 'tsdmp_build_index'
+AS 'MODULE_PATHNAME', 'trace_build_index'
 LANGUAGE C STRICT;
 
 -- 范围查询函数
-CREATE OR REPLACE FUNCTION tsdmp_range_query(
+CREATE OR REPLACE FUNCTION trace_range_query(
     min_x REAL, min_y REAL, min_z REAL,
     max_x REAL, max_y REAL, max_z REAL,
     min_time REAL, max_time REAL,
     data_type_mask INTEGER DEFAULT 7
 )
 RETURNS SETOF spatiotemporal_point
-AS 'MODULE_PATHNAME', 'tsdmp_range_query'
+AS 'MODULE_PATHNAME', 'trace_range_query'
 LANGUAGE C STRICT;
 
 -- kNN查询函数
-CREATE OR REPLACE FUNCTION tsdmp_knn_query(
+CREATE OR REPLACE FUNCTION trace_knn_query(
     center_x REAL, center_y REAL, center_z REAL,
     k INTEGER,
     min_time REAL DEFAULT '-infinity'::REAL,
@@ -128,38 +128,38 @@ CREATE OR REPLACE FUNCTION tsdmp_knn_query(
     data_type_mask INTEGER DEFAULT 7
 )
 RETURNS SETOF knn_result
-AS 'MODULE_PATHNAME', 'tsdmp_knn_query'
+AS 'MODULE_PATHNAME', 'trace_knn_query'
 LANGUAGE C STRICT;
 
 -- 清理函数
-CREATE OR REPLACE FUNCTION tsdmp_clear_data()
+CREATE OR REPLACE FUNCTION trace_clear_data()
 RETURNS BOOLEAN
-AS 'MODULE_PATHNAME', 'tsdmp_clear_data'
+AS 'MODULE_PATHNAME', 'trace_clear_data'
 LANGUAGE C STRICT;
 
 -- 统计信息函数
-CREATE OR REPLACE FUNCTION tsdmp_get_stats()
+CREATE OR REPLACE FUNCTION trace_get_stats()
 RETURNS TABLE(
     total_files INTEGER,
     total_points BIGINT,
     total_chunks INTEGER,
     index_size_mb REAL
 )
-AS 'MODULE_PATHNAME', 'tsdmp_get_stats'
+AS 'MODULE_PATHNAME', 'trace_get_stats'
 LANGUAGE C STRICT;
 
 -- 配置管理函数
-CREATE OR REPLACE FUNCTION tsdmp_set_config(
+CREATE OR REPLACE FUNCTION trace_set_config(
     config_key TEXT,
     config_value TEXT
 )
 RETURNS BOOLEAN
-AS 'MODULE_PATHNAME', 'tsdmp_set_config'
+AS 'MODULE_PATHNAME', 'trace_set_config'
 LANGUAGE C STRICT;
 
-CREATE OR REPLACE FUNCTION tsdmp_get_config(
+CREATE OR REPLACE FUNCTION trace_get_config(
     config_key TEXT
 )
 RETURNS TEXT
-AS 'MODULE_PATHNAME', 'tsdmp_get_config'
+AS 'MODULE_PATHNAME', 'trace_get_config'
 LANGUAGE C STRICT; 

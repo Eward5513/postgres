@@ -147,7 +147,12 @@ void PostgreSQLUtils::executeBinaryInsert(const char* table_name, int key_value,
 BinarySelectResult* PostgreSQLUtils::executeBinarySelect(const char* table_name, int key_value) {
     std::lock_guard<std::mutex> lock(spi_mutex_);
     
+    // Log function entry with parameters
+    elog(INFO, "PostgreSQLUtils::executeBinarySelect: table=%s, key=%d", table_name, key_value);
+    
     if (SPI_connect() != SPI_OK_CONNECT) {
+        elog(ERROR, "PostgreSQLUtils::executeBinarySelect: SPI_connect failed for table=%s, key=%d", 
+             table_name, key_value);
         ereport(ERROR, (errcode(ERRCODE_INTERNAL_ERROR),
                        errmsg("could not connect to SPI")));
     }
@@ -156,6 +161,9 @@ BinarySelectResult* PostgreSQLUtils::executeBinarySelect(const char* table_name,
     StringInfoData sql_buf;
     initStringInfo(&sql_buf);
     appendStringInfo(&sql_buf, "SELECT data FROM %s WHERE key = $1", table_name);
+    
+    elog(INFO, "PostgreSQLUtils::executeBinarySelect: executing SQL: %s with key=%d", 
+         sql_buf.data, key_value);
     
     // Prepare parameters
     Oid argtypes[1] = {INT4OID};
@@ -168,6 +176,8 @@ BinarySelectResult* PostgreSQLUtils::executeBinarySelect(const char* table_name,
     // Prepare and execute plan
     SPIPlanPtr plan = SPI_prepare(sql_buf.data, 1, argtypes);
     if (plan == NULL) {
+        elog(ERROR, "PostgreSQLUtils::executeBinarySelect: SPI_prepare failed for table=%s, key=%d", 
+             table_name, key_value);
         pfree(sql_buf.data);
         SPI_finish();
         ereport(ERROR, (errcode(ERRCODE_INTERNAL_ERROR),
@@ -176,12 +186,17 @@ BinarySelectResult* PostgreSQLUtils::executeBinarySelect(const char* table_name,
     
     int ret = SPI_execute_plan(plan, values, nulls, true, 0);
     if (ret != SPI_OK_SELECT) {
+        elog(ERROR, "PostgreSQLUtils::executeBinarySelect: SPI_execute_plan failed (ret=%d) for table=%s, key=%d", 
+             ret, table_name, key_value);
         SPI_freeplan(plan);
         pfree(sql_buf.data);
         SPI_finish();
         ereport(ERROR, (errcode(ERRCODE_INTERNAL_ERROR),
                        errmsg("SPI_execute_plan failed for SELECT")));
     }
+    
+    elog(INFO, "PostgreSQLUtils::executeBinarySelect: query executed successfully, processed=%lu rows for table=%s, key=%d", 
+         SPI_processed, table_name, key_value);
     
     BinarySelectResult* result = NULL;
     
@@ -197,6 +212,9 @@ BinarySelectResult* PostgreSQLUtils::executeBinarySelect(const char* table_name,
             bytea *binary_bytea = DatumGetByteaP(datum);
             size_t data_size = VARSIZE(binary_bytea) - VARHDRSZ;
             
+            elog(INFO, "PostgreSQLUtils::executeBinarySelect: found data with size=%zu bytes for table=%s, key=%d", 
+                 data_size, table_name, key_value);
+            
             // Use SPI_palloc to allocate struct in caller context
             result = (BinarySelectResult*) SPI_palloc(sizeof(BinarySelectResult));
             result->size = data_size;
@@ -204,13 +222,30 @@ BinarySelectResult* PostgreSQLUtils::executeBinarySelect(const char* table_name,
             // Use SPI_palloc to allocate data memory in caller context
             result->data = SPI_palloc(data_size);
             memcpy(result->data, VARDATA(binary_bytea), data_size);
+            
+            elog(INFO, "PostgreSQLUtils::executeBinarySelect: successfully allocated and copied %zu bytes for table=%s, key=%d", 
+                 data_size, table_name, key_value);
+        } else {
+            elog(WARNING, "PostgreSQLUtils::executeBinarySelect: data column is NULL for table=%s, key=%d", 
+                 table_name, key_value);
         }
+    } else {
+        elog(WARNING, "PostgreSQLUtils::executeBinarySelect: no data found for table=%s, key=%d", 
+             table_name, key_value);
     }
     
     // Clean up SPI resources
     SPI_freeplan(plan);
     pfree(sql_buf.data);
     SPI_finish();
+    
+    if (result != NULL) {
+        elog(INFO, "PostgreSQLUtils::executeBinarySelect: SUCCESS - returning %zu bytes for table=%s, key=%d", 
+             result->size, table_name, key_value);
+    } else {
+        elog(INFO, "PostgreSQLUtils::executeBinarySelect: SUCCESS - returning NULL result for table=%s, key=%d", 
+             table_name, key_value);
+    }
     
     return result;
 }
@@ -280,6 +315,26 @@ BinarySelectAllResult* PostgreSQLUtils::executeBinarySelectAll(const char* table
     return result;
 }
 
+/**
+ * @brief Safely clears a large object table by deleting both table records and associated large objects
+ * 
+ * This function performs a complete cleanup of a large object table by:
+ * 1. Querying all large object OIDs from the specified table
+ * 2. Calling inv_drop() for each OID, which AUTOMATICALLY deletes data from:
+ *    - pg_largeobject table (actual large object data blocks)
+ *    - pg_largeobject_metadata table (large object metadata)
+ * 3. Clearing all records from the user table
+ * 
+ * IMPORTANT: Simply executing "DELETE FROM table_name" would only remove table records
+ * but leave orphaned large objects in the system tables. This function ensures proper
+ * cleanup by using PostgreSQL's standard large object API.
+ * 
+ * @param table_name Name of the table containing lo_oid column
+ * 
+ * @note The inv_drop() function is PostgreSQL's standard API for large object deletion
+ *       and handles all necessary system table cleanup automatically with proper
+ *       transaction safety and permission checking.
+ */
 void PostgreSQLUtils::executeLargeObjectClearTable(const char* table_name) {
     std::lock_guard<std::mutex> lock(spi_mutex_);
     
@@ -293,8 +348,12 @@ void PostgreSQLUtils::executeLargeObjectClearTable(const char* table_name) {
     initStringInfo(&sql_buf);
     appendStringInfo(&sql_buf, "SELECT lo_oid FROM %s", table_name);
     
+    elog(INFO, "PostgreSQLUtils::executeLargeObjectClearTable: querying OIDs from table %s", table_name);
+    
     int ret = SPI_exec(sql_buf.data, 0);
     if (ret == SPI_OK_SELECT) {
+        elog(INFO, "PostgreSQLUtils::executeLargeObjectClearTable: found %lu large objects to delete", SPI_processed);
+        
         // Delete all large objects
         for (int i = 0; i < SPI_processed; i++) {
             HeapTuple tuple = SPI_tuptable->vals[i];
@@ -302,15 +361,24 @@ void PostgreSQLUtils::executeLargeObjectClearTable(const char* table_name) {
             Datum datum = SPI_getbinval(tuple, SPI_tuptable->tupdesc, 1, &isnull);
             if (!isnull) {
                 Oid lo_oid = DatumGetObjectId(datum);
+                elog(INFO, "PostgreSQLUtils::executeLargeObjectClearTable: deleting large object OID %u", lo_oid);
+                
+                // inv_drop() will automatically delete from both pg_largeobject and pg_largeobject_metadata tables
                 inv_drop(lo_oid);
+                
+                elog(INFO, "PostgreSQLUtils::executeLargeObjectClearTable: successfully deleted large object OID %u from system tables", lo_oid);
             }
         }
+    } else {
+        elog(INFO, "PostgreSQLUtils::executeLargeObjectClearTable: no large objects found in table %s", table_name);
     }
     
     // Clear table
     pfree(sql_buf.data);
     initStringInfo(&sql_buf);
     appendStringInfo(&sql_buf, "DELETE FROM %s", table_name);
+    
+    elog(INFO, "PostgreSQLUtils::executeLargeObjectClearTable: clearing table %s", table_name);
     
     ret = SPI_exec(sql_buf.data, 0);
     if (ret != SPI_OK_DELETE) {
@@ -319,6 +387,8 @@ void PostgreSQLUtils::executeLargeObjectClearTable(const char* table_name) {
         ereport(ERROR, (errcode(ERRCODE_INTERNAL_ERROR),
                        errmsg("SPI_exec failed for DELETE")));
     }
+    
+    elog(INFO, "PostgreSQLUtils::executeLargeObjectClearTable: successfully cleared table %s", table_name);
     
     pfree(sql_buf.data);
     SPI_finish();

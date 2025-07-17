@@ -1,6 +1,6 @@
-# TSDMP PostgreSQL Extension
+# TRACE PostgreSQL Extension
 
-TSDMP (Time-Spatial Data Management Platform) PostgreSQL Extension provides efficient spatiotemporal data management capabilities.
+TRACE (Time-Spatial Data Management Platform) PostgreSQL Extension provides efficient spatiotemporal data management capabilities.
 
 ## Build System
 
@@ -50,25 +50,25 @@ make NO_PGXS=1 install
 
 3. Create extension in your database:
    ```sql
-   CREATE EXTENSION tsdmp;
+   CREATE EXTENSION trace;
    ```
 
 ## Usage
 
-After installation, you can use TSDMP functions for spatiotemporal data management:
+After installation, you can use TRACE functions for spatiotemporal data management:
 
 ```sql
 -- Load data from files
-SELECT tsdmp_load_data(ARRAY['/path/to/data']);
+SELECT trace_load_data(ARRAY['/path/to/data']);
 
 -- Build spatial index
-SELECT tsdmp_build_index();
+SELECT trace_build_index();
 
 -- Perform range queries
-SELECT * FROM tsdmp_range_query(min_x, min_y, min_z, max_x, max_y, max_z, min_time, max_time);
+SELECT * FROM trace_range_query(min_x, min_y, min_z, max_x, max_y, max_z, min_time, max_time);
 
 -- Perform kNN queries
-SELECT * FROM tsdmp_knn_query(query_x, query_y, query_z, k);
+SELECT * FROM trace_knn_query(query_x, query_y, query_z, k);
 ```
 
 ## Build Options
@@ -102,9 +102,9 @@ sudo yum install postgresql-devel gcc-c++ boost-devel libpqxx-devel
 
 ## 重要说明
 
-**本扩展直接使用原始TSDMP项目的核心实现**，而不是重新实现功能。这确保了：
+**本扩展直接使用原始TRACE项目的核心实现**，而不是重新实现功能。这确保了：
 
-1. **完全兼容性**：与原始TSDMP项目的算法和数据结构完全一致
+1. **完全兼容性**：与原始TRACE项目的算法和数据结构完全一致
 2. **性能保证**：保持原始项目的高性能特性
 3. **功能完整性**：包含所有原始项目的高级功能
 4. **维护简便性**：原始项目的更新可以直接应用
@@ -113,7 +113,7 @@ sudo yum install postgresql-devel gcc-c++ boost-devel libpqxx-devel
 
 ### 核心组件
 
-1. **原始TSDMP核心** (`../TSDMP/src/`)
+1. **原始TRACE核心** (`../TRACE/src/`)
    - `parameter.h/cpp` - 配置参数管理
    - `DSTdata.h/cpp` - 核心数据结构
    - `OutOfCore.h/cpp` - 外存管理和数据处理
@@ -126,11 +126,11 @@ sudo yum install postgresql-devel gcc-c++ boost-devel libpqxx-devel
    - `Trajectory.h/cpp` - 轨迹数据处理
 
 2. **PostgreSQL桥接层** (`src/`)
-   - `tsdmp_main.c` - PostgreSQL扩展主入口
-   - `tsdmp_bridge.cpp` - 原始TSDMP与PostgreSQL的桥接函数
+   - `trace_main.c` - PostgreSQL扩展主入口
+   - `trace_bridge.cpp` - 原始TRACE与PostgreSQL的桥接函数
 
 3. **头文件** (`include/`)
-   - `tsdmp.h` - 扩展头文件，引用原始TSDMP头文件
+   - `trace.h` - 扩展头文件，引用原始TRACE头文件
 
 ## 功能特性
 
@@ -155,15 +155,15 @@ sudo yum install postgresql-devel gcc-c++ boost-devel libpqxx-devel
 
 ### 查看配置
 ```sql
-SELECT tsdmp_get_config('chunk_max_level');
-SELECT tsdmp_get_config('octree_max_depth');
-SELECT tsdmp_get_config('max_point_per_leaf');
+SELECT trace_get_config('chunk_max_level');
+SELECT trace_get_config('octree_max_depth');
+SELECT trace_get_config('max_point_per_leaf');
 ```
 
 ### 修改配置
 ```sql
-SELECT tsdmp_set_config('chunk_max_level', '8');
-SELECT tsdmp_set_config('octree_max_depth', '15');
+SELECT trace_set_config('chunk_max_level', '8');
+SELECT trace_set_config('octree_max_depth', '15');
 ```
 
 ## 数据类型
@@ -219,22 +219,22 @@ SELECT tsdmp_set_config('octree_max_depth', '15');
 ## 开发说明
 
 ### 桥接函数
-桥接函数位于 `src/tsdmp_bridge.cpp`，负责：
-- 将PostgreSQL参数转换为原始TSDMP格式
-- 调用原始TSDMP核心函数
+桥接函数位于 `src/trace_bridge.cpp`，负责：
+- 将PostgreSQL参数转换为原始TRACE格式
+- 调用原始TRACE核心函数
 - 将结果转换为PostgreSQL格式
 
 ### 扩展原始功能
 要添加新功能：
-1. 在原始TSDMP项目中实现核心逻辑
+1. 在原始TRACE项目中实现核心逻辑
 2. 在桥接层添加包装函数
 3. 在主文件中添加PostgreSQL函数接口
 4. 更新SQL定义文件
 
 ## 许可证
 
-本扩展遵循原始TSDMP项目的许可证条款。
+本扩展遵循原始TRACE项目的许可证条款。
 
 ## 贡献
 
-欢迎提交问题报告和功能请求。在修改核心算法时，请确保与原始TSDMP项目保持同步。 
+欢迎提交问题报告和功能请求。在修改核心算法时，请确保与原始TRACE项目保持同步。 

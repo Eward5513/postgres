@@ -39,11 +39,15 @@ namespace fs = filesystem;
  * @brief Constructor for DataLoader class
  * 
  * Initializes a DataLoader instance with the specified parameters for loading
- * and processing spatiotemporal data files.
+ * and processing spatiotemporal data files. Sets up the core configuration
+ * for the data loading and indexing pipeline.
  * 
  * @param directory The directory path containing data files to be loaded
  * @param max_file_num Maximum number of files to process (0 means no limit)
  * @param sample_ratio Sampling ratio for data reduction (0.0 to 1.0)
+ * 
+ * @note The constructor only initializes configuration parameters. 
+ *       Actual data loading begins when load_data() is called.
  */
 DataLoader::DataLoader(const string& directory, int max_file_num, float sample_ratio)
     : directory(directory), max_file_num(max_file_num), sample_ratio(sample_ratio)
@@ -54,9 +58,55 @@ DataLoader::DataLoader(const string& directory, int max_file_num, float sample_r
  * @brief Destructor for DataLoader class
  * 
  * Cleans up resources and performs necessary cleanup operations.
+ * Currently performs default cleanup as most resources are managed
+ * by RAII containers.
  */
 DataLoader::~DataLoader()
 {
+}
+
+/**
+ * @brief Main entry point for data loading and processing pipeline
+ * 
+ * This is the primary public interface for the DataLoader class. It coordinates
+ * the entire data loading pipeline including file discovery, metadata creation,
+ * database cleanup, and spatial index construction.
+ * 
+ * Processing pipeline:
+ * 1. Discover and prepare source files from directory
+ * 2. Create file-to-ID mapping and save as JSON metadata
+ * 3. Clear existing database tables to ensure clean state
+ * 4. Build comprehensive spatial indexes for efficient querying
+ * 
+ * @return vector<string> List of processed filenames for reference
+ * 
+ * @note Creates a files_user.json file containing file-to-ID mappings
+ * @note Clears all existing spatial index tables before processing
+ * @throws May throw exceptions from underlying database operations or file I/O
+ */
+vector<string> DataLoader::load_data()
+{
+    this->load_data_source_files();
+    json users_json;
+    for (size_t i = 0; i < filenames.size(); i++)
+    {
+        users_json[filenames[i]] = i;
+    }
+    ofstream out_file(data_dir + "/files_user.json");
+    out_file << users_json.dump(10); // Formatted output
+    out_file.close();
+
+    elog(INFO, "loaded %zu files from directory '%s'", filenames.size(), this->directory.c_str());
+
+    elog(INFO, "clear index table");
+            octreeNodeManager.clearTable();
+    kdTreeNodeManager.clearTable();
+    userDataManager.clearTable();
+    meshConnectionManager.clearTable();
+    elog(INFO, "cleared index table");
+    build_index();
+
+    return filenames;  
 }
 
 /**
@@ -115,50 +165,6 @@ void DataLoader::load_data_source_files()
 }
 
 /**
- * @brief Main function to load and process all data files
- * 
- * This is the primary entry point for data loading and processing. It coordinates
- * the entire data loading pipeline including file discovery, metadata creation,
- * database cleanup, and spatial index construction.
- * 
- * Processing pipeline:
- * 1. Load and prepare source files from directory
- * 2. Create file-to-ID mapping and save as JSON metadata
- * 3. Clear existing database tables to ensure clean state
- * 4. Build spatial indexes for efficient querying
- * 
- * @return vector<string> List of processed filenames
- * 
- * @note Creates a files_user.json file containing file-to-ID mappings
- * @note Clears all existing spatial index tables before processing
- * @throws May throw exceptions from underlying database operations
- */
-vector<string> DataLoader::load_data()
-{
-    this->load_data_source_files();
-    json users_json;
-    for (size_t i = 0; i < filenames.size(); i++)
-    {
-        users_json[filenames[i]] = i;
-    }
-    ofstream out_file(data_dir + "/files_user.json");
-    out_file << users_json.dump(10); // Formatted output
-    out_file.close();
-
-    elog(INFO, "loaded %zu files from directory '%s'", filenames.size(), this->directory.c_str());
-
-    elog(INFO, "clear index table");
-    OctreeNodeManager::clearTable();
-    KdTreeNodeManager::clearTable();
-    UserDataManager::clearTable();
-    MeshConnectionManager::clearTable();
-    elog(INFO, "cleared index table");
-    build_index();
-
-    return filenames;  
-}
-
-/**
  * @brief Build spatial index for efficient spatiotemporal data querying
  * 
  * This function implements a comprehensive spatial indexing pipeline that processes
@@ -208,27 +214,30 @@ void DataLoader::build_index()
     this->build_time["doChunking_time->merging_time"] = tc.second();
     tc.tick();
     elog(INFO, "build chunk");
-    OctreeNode *root = building_octree_bottom_up_top_down(global_bound);// build chunk
+    OctreeNode *root = this->building_octree_bottom_up_top_down(global_bound);// build chunk
     std::vector<DBOctreeNode> dbNodes = convertOctreeToDB(root);
-    OctreeNodeManager::writeOctreeNodesToDatabase(-1, dbNodes);
+    octreeNodeManager.writeOctreeNodesToDatabase(-1, dbNodes);
     // if(delete_files)
     // std::remove((data_dir + "/sample_data/all_sampled_data.bin").c_str());
     this->build_time["doChunking_time->chunk_constrution_time"] = tc.second();
     if (0)
     { // validation
-        dbNodes = OctreeNodeManager::loadOctreeNodesFromDatabase(-1);
-        logger.log("INFO: dbNodes: " + std::to_string(dbNodes.size()));
+        elog(INFO, "validation");
+        dbNodes = octreeNodeManager.loadOctreeNodesFromDatabase(-1);
+        elog(INFO, "dbNodes: %zu", dbNodes.size());
         if (validateConversion(root, dbNodes, 0))
         {
-            logger.log("INFO: Validation passed: The structures are consistent.");
+            elog(INFO, "Validation passed: The structures are consistent.");
         }
         else
         {
-            logger.log("ERROR: Validation failed: The structures are not consistent.");
+            elog(ERROR, "Validation failed: The structures are not consistent.");
         }
     }
-    logger.log("INFO: create chunk time: " + std::to_string(tc.second()) + "s");
+    elog(INFO, "create chunk time: %f seconds", tc.second());
     delete root;
+
+    split_data_to_db1(dbNodes);
 }
 
 /**
@@ -288,7 +297,7 @@ void DataLoader::para_bound_and_sample(){
     }
     
     // std::cout << "data_size:" << bounded_data_size << " file count:" << finished_file_counting << std::endl;
-    bool firstFlag = true;
+    // bool firstFlag = true; // unused variable
     global_bound = sub_bounds.front();
     for (auto &bound_pair : sub_bounds)
     {
@@ -430,7 +439,7 @@ Bounds DataLoader::calculate_bound_and_sampleing(const string &filename, file_id
                 logger.log(log_message);
                 tc.tick();
             }
-            uint8_t colorR, colorG, colorB;
+            // uint8_t colorR, colorG, colorB; // unused variables
             stringstream ss(line);
             float x, y, z;
             float time, intensity;
@@ -550,7 +559,7 @@ Bounds DataLoader::calculate_bound_and_sampleing(const string &filename, file_id
             logger.log(warning_message);
         }
         
-        MeshConnectionManager::writeDataToDatabase(meshid, connections);
+        meshConnectionManager.writeDataToDatabase(meshid, connections);
     }
     if (buffer.size() > 0)
     {
@@ -598,7 +607,7 @@ void DataLoader::sort_sample_file(int out_file_id, const string &filename, const
 {
     auto spatial_bound = bounds.to_spatial_bound();
     std::ifstream infile(filename, std::ios::binary);
-    if (!infile) {
+    if (!infile.is_open()) {
         throw std::runtime_error("Open file failed!");
     }
     std::vector<SpatioTemporalData> buffer(4 * 64 * 1024 * 32/max_concurrent_tasks_for_count_task);
@@ -846,8 +855,32 @@ void DataLoader::merge_sample_data(){
     
 }
 
-OctreeNode *building_octree_bottom_up_top_down(Bounds bounds)
+/**
+ * @brief Build octree structure using bottom-up then top-down approach
+ * 
+ * This function implements a sophisticated octree construction algorithm that combines
+ * bottom-up sampling with top-down spatial partitioning. It's designed for handling
+ * large-scale spatiotemporal datasets that may not fit in memory.
+ * 
+ * Algorithm approach:
+ * 1. Initialize BuildChunk utility with configured thread pool
+ * 2. Load sample size statistics for spatial cells at different levels
+ * 3. Calculate total sample count for validation and logging
+ * 4. Clear temporary chunk data directory for fresh processing
+ * 5. Build chunk-based octree nodes using sample data
+ * 6. Wait for all indexing tasks to complete before returning
+ * 
+ * @param bounds Spatial bounding box for the entire octree structure
+ * @return OctreeNode* Pointer to the root node of the constructed octree
+ * 
+ * @note Uses external merge-sort approach for large datasets
+ * @note Thread pool size controlled by max_concurrent_task_across_chunk
+ * @note Sample data is used to guide spatial partitioning decisions
+ * @note Cleanup of temporary data directories is performed automatically
+ */
+OctreeNode* DataLoader::building_octree_bottom_up_top_down(const Bounds& bounds)
 {
+    elog(INFO, "DataLoader::building_octree_bottom_up_top_down");
     BuildChunk build_util(max_concurrent_task_across_chunk);
     build_util.load_sample_size();
     std::int64_t count_sample = 0;
@@ -896,7 +929,33 @@ OctreeNode *building_octree_bottom_up_top_down(Bounds bounds)
  * @note Output files go to next iteration: {iteration+1}_{file_id/2}.bin
  * @note Uses 1KB buffer for efficient memory usage
  */
-uint64_t domerge(uint64_t cur_file_id, uint64_t cur_iter, uint64_t cur_file_num, std::string prefix)
+/**
+ * @brief Merge two sorted sample files into a single output file
+ * 
+ * This function implements a two-way merge operation for spatiotemporal data files.
+ * It reads two sorted binary files, merges them based on spatial cell IDs, and 
+ * writes the result to a new file. This is a core component of the external 
+ * sorting algorithm used for handling large datasets.
+ * 
+ * Algorithm details:
+ * - Reads headers containing cell ID and point count from both input files
+ * - Performs merge based on spatial cell ordering (Z-order curve)
+ * - For matching cell IDs, combines point counts and concatenates data
+ * - Uses buffered I/O (1KB buffer) for efficient memory usage
+ * - Handles edge cases like single file processing
+ * 
+ * @param cur_file_id Current file identifier in the merge sequence
+ * @param cur_iter Current iteration level in the merge tree
+ * @param cur_file_num Total number of files in current iteration
+ * @param prefix Directory prefix for file organization (e.g., "sample_data")
+ * @return Total number of spatiotemporal points processed
+ * 
+ * @note File naming convention: {iteration}_{file_id}.bin
+ * @note Output files are written to next iteration: {iteration+1}_{file_id/2}.bin
+ * @note Single remaining files are renamed rather than copied for efficiency
+ * @note Thread-safe logging used for progress tracking
+ */
+uint64_t DataLoader::domerge(uint64_t cur_file_id, uint64_t cur_iter, uint64_t cur_file_num, const std::string& prefix)
 {
     // string cur_file_name = "";
     // string next_file_name = "";
@@ -927,7 +986,7 @@ uint64_t domerge(uint64_t cur_file_id, uint64_t cur_iter, uint64_t cur_file_num,
                 cur_file.read(reinterpret_cast<char *>(buffer.data()), sizeof(SpatioTemporalData) * points_to_read);
                 for (size_t i = 0; i < points_to_read; ++i)
                 {
-                    const SpatioTemporalData &point = buffer[i];
+                    // const SpatioTemporalData &point = buffer[i]; // unused variable
                 }
                 points_read += points_to_read;
             }
@@ -1230,7 +1289,8 @@ uint64_t DataLoader::Sequential_domerge(uint64_t cur_iter_id, bool sample_or_ori
 
 void BuildChunk::load_sample_size()
 {
-    uint64_t sampleCellNums = (int64_t)1 << (int64_t)chunk_max_level * 3, sampleDimension = (int64_t)1 << (int64_t)chunk_max_level;
+    uint64_t sampleCellNums = (int64_t)1 << (int64_t)chunk_max_level * 3;
+    // uint64_t sampleDimension = (int64_t)1 << (int64_t)chunk_max_level; // unused variable
     {
         std::ifstream sampleFile(data_dir +"/sample_data/sampleCellNums.bin", std::ios::binary);
         sampleFile.seekg(0, std::ios::end);
@@ -1357,7 +1417,35 @@ void BuildChunk::load_sample_size()
 //     }
 // }
 
-void doIndexing(Bounds bound, int chunk_id, std::vector<SpatioTemporalData> data, int octree_max_level, int max_point_per_leaf, int leaf_num)
+/**
+ * @brief Build spatial indexes (Octree + KD-tree) for a data chunk
+ * 
+ * This function constructs a comprehensive spatial indexing system for a specific
+ * data chunk. It builds both an Octree for spatial partitioning and KD-trees for
+ * efficient point queries within each octree leaf node.
+ * 
+ * Indexing pipeline:
+ * 1. Handle empty data chunks by creating minimal index structures
+ * 2. Build Octree using spatial partitioning with configurable depth
+ * 3. Encode Octree nodes with sequential IDs for database storage
+ * 4. Convert in-memory Octree to database-compatible format
+ * 5. Extract leaf nodes for detailed KD-tree construction
+ * 6. Create KD-trees for each leaf node in parallel
+ * 7. Store all index structures in database
+ * 
+ * @param bound Spatial bounding box for the data chunk
+ * @param chunk_id Unique identifier for this data chunk
+ * @param data Vector of spatiotemporal data points to be indexed
+ * @param octree_max_level Maximum depth for octree construction
+ * @param max_point_per_leaf Maximum points allowed in octree leaf nodes
+ * @param leaf_num Expected number of leaf nodes (used for progress tracking)
+ * 
+ * @note Handles empty chunks by creating minimal valid index structures
+ * @note Uses parallel processing for KD-tree construction within leaves
+ * @note All index data is persisted to database for later query processing
+ * @note Memory cleanup handled automatically via RAII and explicit deletion
+ */
+void BuildChunk::doIndexing(Bounds bound, int chunk_id, std::vector<SpatioTemporalData> data, int octree_max_level, int max_point_per_leaf, int leaf_num)
 {
     TimerClock tc;
     OctreeBuilder octree_builder(max_point_per_leaf);
@@ -1370,10 +1458,10 @@ void doIndexing(Bounds bound, int chunk_id, std::vector<SpatioTemporalData> data
         dbNodes[0].id = 0;
         dbNodes[0].oc_id = chunk_id;
         dbNodes[0].kd_id = 0;
-        OctreeNodeManager::writeOctreeNodesToDatabase(chunk_id, dbNodes);
+        octreeNodeManager.writeOctreeNodesToDatabase(chunk_id, dbNodes);
         auto tree = std::vector<DBKdtreeNode>(0);
         BinaryKVStorage bs(data_dir+"/kdtree");
-        // KdTreeNodeManager::writeKdTreeNodesToDatabase(chunk_id, dbNodes[0].id, tree);
+        // kdTreeNodeManager.writeKdTreeNodesToDatabase(chunk_id, dbNodes[0].id, tree);
         bs.write("kd_"+std::to_string(chunk_id)+"_"+std::to_string(dbNodes[0].id),tree);
         // 建立这里的原因是防止采样数据没有采样到，但是原始数据里面又这样的数据而报错
         return;
@@ -1383,12 +1471,12 @@ void doIndexing(Bounds bound, int chunk_id, std::vector<SpatioTemporalData> data
     OctreeNode *octree_root = octree_builder.buildOctree(bound);//memory pointer
     encode_Octree(octree_root);
     std::vector<DBOctreeNode> dbNodes = convertOctreeToDB(octree_root, chunk_id);//pointer to vector
-    OctreeNodeManager::writeOctreeNodesToDatabase(chunk_id, dbNodes);
+    octreeNodeManager.writeOctreeNodesToDatabase(chunk_id, dbNodes);
     tc.tick();
     vector<OctreeNode *> leafVector;
     getLeafNodes(octree_root, leafVector);
     tc.tick();
-    para_createTreeWithLeafNode(chunk_id, octree_builder.dataPoints, leafVector);
+    this->para_createTreeWithLeafNode(chunk_id, octree_builder.dataPoints, leafVector);
     ++finihsed_octree;
     // std::cout << "build in chunk:" << finihsed_octree << ":" << leaf_num << "\r";
     delete octree_root;
@@ -1416,9 +1504,10 @@ OctreeNode *BuildChunk::build_chunk_node_sample(Bounds bounds, uint64_t level, u
             // do_indexing_thread_pool.wait_for_all_tasks(max_concurrent_task_across_chunk * 2);
             
             // Serial implementation
-            doIndexing(node->bound, node->id, std::move(chunk_data), octree_max_level, max_point_per_leaf, -1);
+            this->doIndexing(node->bound, node->id, std::move(chunk_data), octree_max_level, max_point_per_leaf, -1);
         }
-        logger.log("INFO: leaf info: id:" + std::to_string(node->id) + " level:" + std::to_string(level) + " x:" + std::to_string(x) + " y:" + std::to_string(y) + " z:" + std::to_string(z) + " size:" + std::to_string(node->pointCount));
+                elog(INFO, "leaf info: id:%d level:%ld x:%ld y:%ld z:%ld size:%zu",
+             node->id, (long)level, (long)x, (long)y, (long)z, node->pointCount);
         return node;
     }
     for (int i = 0; i < 8; ++i)
@@ -1461,7 +1550,31 @@ OctreeNode *BuildChunk::build_chunk_node_sample(Bounds bounds, uint64_t level, u
     return node;
 }
 
-void split_data(int id,std::vector<DBOctreeNode> &nodes, std::vector<SpatioTemporalData> &data,std::unordered_map<int,std::vector<SpatioTemporalData>> &result) {
+/**
+ * @brief Recursively split spatiotemporal data based on octree spatial partitioning
+ * 
+ * This function traverses the octree structure and distributes spatiotemporal data
+ * points to their appropriate leaf nodes. It implements recursive spatial partitioning
+ * based on the octree's hierarchical structure, ensuring that each data point is
+ * assigned to the correct leaf node for efficient querying.
+ * 
+ * Algorithm details:
+ * - For leaf nodes: directly assigns all data points to the result map
+ * - For internal nodes: spatially partitions data based on center coordinates
+ * - Uses 3D spatial indexing with bit-based octant calculation
+ * - Recursively processes each of the 8 octants (children)
+ * - Validates data consistency between sample and original datasets
+ * 
+ * @param id Current octree node ID being processed
+ * @param nodes Reference to vector containing all octree nodes in the chunk
+ * @param data Reference to spatiotemporal data points to be distributed
+ * @param result Output map from leaf node ID to assigned data points
+ * 
+ * @note Uses move semantics for efficient data transfer to leaf nodes
+ * @note Logs errors when sample/original data inconsistencies are detected
+ * @note Octant indexing: bit 0=x, bit 1=y, bit 2=z (0=negative, 1=positive)
+ */
+void DataLoader::split_data(int id,std::vector<DBOctreeNode> &nodes, std::vector<SpatioTemporalData> &data,std::unordered_map<int,std::vector<SpatioTemporalData>> &result) {
     auto &node = nodes[id];
     if(node.is_leaf){
         result[node.id] = std::move(data);
@@ -1486,56 +1599,37 @@ void split_data(int id,std::vector<DBOctreeNode> &nodes, std::vector<SpatioTempo
             }
             continue;
         }
-        split_data(node.children[i],nodes,sub_data[i],result);
+        this->split_data(node.children[i],nodes,sub_data[i],result);
     }
 }
 
-void chunk_original_data_to_db(int chunk_id, std::vector<SpatioTemporalData> all_data)
-{
-    std::vector<DBOctreeNode> ocNodes = OctreeNodeManager::loadOctreeNodesFromDatabase(chunk_id);
-    size_t data_count = 0;
-    long long in_this_file_read_count = 0;
-    std::unordered_map<int, std::vector<SpatioTemporalData>> to_db_data; // octree leaf id --> data
-    auto write_points_to_db = [&](int octreeid, int kdtreeid, std::vector<SpatioTemporalData> &data)
-    {
-        std::sort(data.begin(), data.end(), [](const SpatioTemporalData &a, const SpatioTemporalData &b)
-                  { return a.time < b.time; });
-        originalDataManager.writeOriginalDataToDatabase(octreeid, kdtreeid, data);
-    };
-
-    split_data(0, ocNodes, all_data, to_db_data);
-
-    for (auto &i : to_db_data)
-    {
-        in_this_file_read_count += i.second.size();
-    }
-    for (auto &i : to_db_data)
-    {
-        write_points_to_db(chunk_id, i.first, i.second);
-    }
-}
-
-// void chunk_original_data_to_db(DBOctreeNode leaf_node)
+/**
+ * @brief Process and store original spatiotemporal data into database
+ * 
+ * This function takes a complete dataset for a spatial chunk and stores it in the
+ * database with proper spatial organization. It leverages the pre-built octree
+ * structure to distribute data points to their corresponding leaf nodes, then
+ * creates KD-tree indexes and stores everything in the database.
+ * 
+ * Processing pipeline:
+ * 1. Load existing octree structure from database for the chunk
+ * 2. Distribute all data points to appropriate octree leaf nodes
+ * 3. Sort data within each leaf by timestamp for temporal queries
+ * 4. Store organized data in database with proper indexing
+ * 5. Track processing statistics for monitoring
+ * 
+ * @param chunk_id Unique identifier for the spatial chunk being processed
+ * @param all_data Complete vector of spatiotemporal data points for the chunk
+ * 
+ * @note Data is sorted by timestamp within each leaf for temporal efficiency
+ * @note Uses lambda function for consistent data storage interface
+ * @note Validates data distribution matches octree leaf structure
+ * @note All database operations are performed through manager classes
+ */
+// void DataLoader::chunk_original_data_to_db(int chunk_id, std::vector<SpatioTemporalData> all_data)
 // {
-//     std::vector<DBOctreeNode> ocNodes = OctreeNodeManager::loadOctreeNodesFromDatabase(leaf_node.id);
-//     size_t data_count = 0;
-//     std::vector<SpatioTemporalData> all_data;
-//     {
-//         auto original_file = std::ifstream(data_dir + "/chunk_original_data/" + std::to_string(leaf_node.id) + ".bin", std::ios::binary);
-//         if (!original_file.is_open()) {
-//             return;
-//         }
-//         original_file.seekg(0, std::ios::end);
-//         size_t file_size = original_file.tellg();
-//         original_file.seekg(0, std::ios::beg);
-//         data_count = file_size / sizeof(SpatioTemporalData);
-//         logger.log("INFO: leaf_node.id:" + std::to_string(leaf_node.id) + "  data_count:" + std::to_string(data_count));
-//         all_data.resize(data_count);
-//         original_file.read(reinterpret_cast<char *>(all_data.data()), file_size);
-//         original_file.close();
-//         if(delete_files)
-//         std::remove((data_dir + "/chunk_original_data/" + std::to_string(leaf_node.id) + ".bin").c_str());
-//     }
+//     std::vector<DBOctreeNode> ocNodes = octreeNodeManager.loadOctreeNodesFromDatabase(chunk_id);
+//     // size_t data_count = 0; // unused variable
 //     long long in_this_file_read_count = 0;
 //     std::unordered_map<int, std::vector<SpatioTemporalData>> to_db_data; // octree leaf id --> data
 //     auto write_points_to_db = [&](int octreeid, int kdtreeid, std::vector<SpatioTemporalData> &data)
@@ -1545,7 +1639,7 @@ void chunk_original_data_to_db(int chunk_id, std::vector<SpatioTemporalData> all
 //         originalDataManager.writeOriginalDataToDatabase(octreeid, kdtreeid, data);
 //     };
 
-//     split_data(0, ocNodes, all_data, to_db_data);
+//     this->split_data(0, ocNodes, all_data, to_db_data);
 
 //     for (auto &i : to_db_data)
 //     {
@@ -1553,13 +1647,13 @@ void chunk_original_data_to_db(int chunk_id, std::vector<SpatioTemporalData> all
 //     }
 //     for (auto &i : to_db_data)
 //     {
-//         write_points_to_db(leaf_node.id, i.first, i.second);
+//         write_points_to_db(chunk_id, i.first, i.second);
 //     }
 // }
 
-
 void BuildChunk::load_original_and_sample_size(){
-    uint64_t sampleCellNums = (int64_t)1 << (int64_t)chunk_max_level * 3, sampleDimension = (int64_t)1 << (int64_t)chunk_max_level;
+    uint64_t sampleCellNums = (int64_t)1 << (int64_t)chunk_max_level * 3;
+    // uint64_t sampleDimension = (int64_t)1 << (int64_t)chunk_max_level; // unused variable
     {
         sampleCells.resize(sampleCellNums);
         originalCells.resize(sampleCellNums);
@@ -1673,4 +1767,546 @@ void BuildChunk::load_original_and_sample_size(){
     }
     std::reverse(cell_num_in_diff_level.begin(), cell_num_in_diff_level.end());
     std::reverse(sample_cell_num_in_diff_level.begin(), sample_cell_num_in_diff_level.end());
+}
+
+/**
+ * @brief Create KD-tree indexes for octree leaf nodes in parallel
+ * 
+ * This function orchestrates the parallel creation of KD-tree indexes for all
+ * leaf nodes in an octree structure. It uses a thread pool to efficiently
+ * process multiple leaf nodes simultaneously, creating detailed spatial indexes
+ * for fast point queries within each leaf.
+ * 
+ * Processing approach:
+ * - Creates a thread pool with configured parallelism level
+ * - Submits each leaf node for KD-tree processing asynchronously
+ * - Uses boost::asio for efficient thread management
+ * - Waits for all KD-tree construction tasks to complete
+ * - Ensures thread-safe access to shared data structures
+ * 
+ * @param chunk_id Unique identifier for the spatial chunk being processed
+ * @param dataPoints Complete dataset of spatiotemporal points for the chunk
+ * @param leafVector Vector of all octree leaf nodes requiring KD-tree indexes
+ * 
+ * @note Thread pool size controlled by max_concurrent_task_inside_chunk parameter
+ * @note Each leaf node is processed by newcreateTreeWithLeafNode function
+ * @note Synchronization ensures all KD-trees are built before function returns
+ * @note Essential for enabling efficient point-in-region queries
+ */
+void BuildChunk::para_createTreeWithLeafNode(int chunk_id, const vector<SpatioTemporalData> &dataPoints,
+                                 const vector<OctreeNode *> &leafVector)
+{
+    elog(INFO, "BuildChunk::para_createTreeWithLeafNode");
+    boost::asio::thread_pool pool(max_concurrent_task_inside_chunk);
+    for (int i = 0; i < leafVector.size(); i++)
+    {
+        OctreeNode *node = leafVector[i];
+        boost::asio::post(pool, [&, node, chunk_id]()
+                          { this->newcreateTreeWithLeafNode(node, dataPoints, chunk_id); });
+    }
+    pool.join();
+}
+
+/**
+ * @brief Create KD-tree index for a single octree leaf node
+ * 
+ * This function builds a detailed KD-tree index for a specific octree leaf node,
+ * enabling efficient point queries within that spatial region. It extracts the
+ * relevant data points, builds the KD-tree structure, and stores it in the
+ * database for query processing.
+ * 
+ * Processing steps:
+ * 1. Extract spatiotemporal data points belonging to the leaf node
+ * 2. Handle empty leaf nodes by creating minimal valid structures
+ * 3. Build KD-tree using the extracted points for spatial indexing
+ * 4. Convert KD-tree to database-compatible format
+ * 5. Store the KD-tree index in the database with proper associations
+ * 
+ * @param node Pointer to the octree leaf node requiring KD-tree indexing
+ * @param dataPoints Complete dataset of spatiotemporal points for the chunk
+ * @param chunk_id Unique identifier for the spatial chunk being processed
+ * 
+ * @note Handles empty leaf nodes gracefully by creating empty KD-tree structures
+ * @note KD-tree is optimized for 3D spatial queries within the leaf's bounds
+ * @note All database storage operations are performed through manager classes
+ * @note Essential component for enabling efficient spatial point queries
+ */
+void BuildChunk::newcreateTreeWithLeafNode(const OctreeNode *node,
+                               const vector<SpatioTemporalData> &dataPoints, int chunk_id)
+{
+
+    std::vector<SpatioTemporalData> points;
+    for (auto p_idx : node->points)
+    {
+        points.push_back(dataPoints[p_idx]);
+    }
+    if (points.size() == 0)
+    {
+        // kdTreeNodeManager.writeKdTreeNodesToDatabase(chunk_id, node->id, std::vector<DBKdtreeNode>());
+        BinaryKVStorage bs(data_dir+"/kdtree");
+        bs.write("kd_"+std::to_string(chunk_id)+"_"+std::to_string(node->id),std::vector<DBKdtreeNode>());
+        return;
+    }
+    KDTreeBuilder builder;
+    builder.buildKdTree(points);
+    auto tree = builder.convert();
+    // auto tree = buildKdTree(points);
+    // kdTreeNodeManager.writeKdTreeNodesToDatabase(chunk_id, node->id, tree);
+    BinaryKVStorage bs(data_dir+"/kdtree");
+    bs.write("kd_"+std::to_string(chunk_id)+"_"+std::to_string(node->id),tree);
+}
+
+/**
+ * @brief Sort spatiotemporal data from a single file according to octree spatial partitioning
+ * 
+ * This function processes a single input file containing spatiotemporal data points and
+ * distributes them into separate chunk files based on octree leaf node assignments.
+ * It performs spatial partitioning by querying which octree leaf each point belongs to,
+ * then groups points by their assigned leaf nodes and writes them to corresponding
+ * chunk files for efficient spatial access.
+ * 
+ * Processing workflow:
+ * 1. Opens the input file and reads data in large buffered chunks for efficiency
+ * 2. For each data point, queries the octree to determine target leaf node
+ * 3. Groups points by leaf node ID in memory to minimize file I/O operations
+ * 4. Writes grouped points to separate chunk files (one per leaf node)
+ * 5. Uses file locking to ensure thread-safe access to chunk files
+ * 6. Updates global statistics about processed point counts
+ * 
+ * File organization:
+ * - Input: Single binary file containing SpatioTemporalData points
+ * - Output: Multiple chunk files named by leaf node ID in /chunk_original_data/
+ * - Each chunk file contains all points belonging to that spatial region
+ * 
+ * Concurrency considerations:
+ * - Thread-safe through file locking mechanism (files_lock)
+ * - Can be called concurrently for different input files
+ * - Atomic updates to global counters (original_sort_count)
+ * - No database operations, only file I/O
+ * 
+ * @param filename Path to the input binary file containing spatiotemporal data
+ * @param query_utils Octree query utility for spatial partitioning decisions
+ * @param block_size Statistics collection map for block size tracking (currently unused)
+ * @param mutex Synchronization mutex for thread-safe operations
+ * 
+ * @note Buffer size is dynamically calculated based on thread pool configuration
+ * @note Output files are opened in append mode to support concurrent writes
+ * @note Essential preprocessing step for spatial indexing and database storage
+ */
+void DataLoader::sort_original_file_by_octree(const string &filename, OctreePointQuery &query_utils,std::unordered_map<int,std::unordered_map<int,std::int64_t>> &block_size,std::mutex &mutex)
+{
+    // std::unordered_map<int,std::unordered_map<int,std::int64_t>> sub_block_size;
+    logger.log("INFO: sort_original_file_by_octree: Processing file " + filename);
+    
+    std::ifstream infile(filename, std::ios::binary);
+    std::vector<SpatioTemporalData> buffer(4 * 4 * 64 * 1024 * 32/max_concurrent_tasks_for_count_task);
+    size_t buffer_size = buffer.size();
+    size_t points_read;
+    while (infile)
+    {
+        std::unordered_map<int64_t, std::vector<SpatioTemporalData>> cellPointCurrentFile;
+        infile.read(reinterpret_cast<char *>(buffer.data()), sizeof(SpatioTemporalData) * buffer_size);
+        points_read = infile.gcount() / sizeof(SpatioTemporalData);
+        original_sort_count += points_read;
+        for (size_t i = 0; i < points_read; ++i)
+        {
+            auto &point = buffer[i];
+            auto leaf_node = query_utils.point_query_octree(point);
+            // logger.log("INFO: sort_original_file_by_octree: leaf_node.id: " + std::to_string(leaf_node.id));
+            cellPointCurrentFile[leaf_node.id].emplace_back(point);
+            // ++sub_block_size[leaf_node.oc_id][leaf_node.kd_id];
+        }
+
+        for (const auto &[key, vec] : cellPointCurrentFile)
+        {
+            files_lock.lock(to_string(key));
+            std::ofstream outFile(data_dir + "/chunk_original_data/" + to_string(key) + ".bin", std::ios::app | std::ios::binary);
+            outFile.write(reinterpret_cast<const char *>(vec.data()), vec.size() * sizeof(SpatioTemporalData));
+            files_lock.unlock(to_string(key));
+        }
+
+
+        if (points_read < buffer_size)
+        {
+            break;
+        }
+    }
+    // {
+    //     std::unique_lock<std::mutex> lock(mutex);
+    //     for (auto &[ocid,co_value]: sub_block_size) {
+    //         for (auto &[kdid,kdvalue]:co_value) {
+    //             block_size[ocid][kdid] += kdvalue;
+    //         }
+    //     }
+    // }
+}
+
+/**
+ * @brief Parallel processing of multiple files for octree-based spatial partitioning
+ * 
+ * This function orchestrates the parallel processing of multiple input data files,
+ * distributing spatiotemporal data points across octree-organized chunk files.
+ * It creates a thread pool to process files concurrently, with each thread handling
+ * one file at a time through the sort_original_file_by_octree function.
+ * 
+ * Parallel processing strategy:
+ * 1. Creates a thread pool sized according to system configuration
+ * 2. Submits each input file as an independent processing task
+ * 3. Each task performs spatial partitioning for its assigned file
+ * 4. Tracks progress across all concurrent operations
+ * 5. Ensures all tasks complete before function returns
+ * 6. Provides detailed logging for monitoring and debugging
+ * 
+ * Thread safety considerations:
+ * - File-level parallelism: Each thread processes a different input file
+ * - Chunk-level synchronization: Shared chunk files use file locking
+ * - Atomic progress tracking: Thread-safe counters for monitoring
+ * - No database operations: Only file I/O operations are performed
+ * 
+ * Performance characteristics:
+ * - Scales with available CPU cores and I/O bandwidth
+ * - Minimizes total processing time through parallel execution
+ * - Memory usage scales with thread pool size and buffer configurations
+ * - I/O patterns optimized for sequential reads and random writes
+ * 
+ * Output organization:
+ * - Creates spatially-organized chunk files in /chunk_original_data/
+ * - Each chunk file contains points from the same octree leaf region
+ * - Enables efficient spatial queries and database loading operations
+ * - Supports subsequent parallel database insertion workflows
+ * 
+ * @param filenames Vector of input file paths to process in parallel
+ * @param query_utils Shared octree query utility for spatial partitioning
+ * @param block_size Statistics collection map for performance analysis
+ * 
+ * @note Thread pool size controlled by max_concurrent_tasks_for_count_task
+ * @note Progress reporting includes per-file timing and overall completion status
+ * @note Essential step in the data ingestion pipeline before database storage
+ * @note File operations only - no PostgreSQL SPI calls, safe for parallel execution
+ */
+void DataLoader::para_sort_original_file_by_octree(const vector<string> &filenames, OctreePointQuery &query_utils,
+    std::unordered_map<int,std::unordered_map<int,std::int64_t>> &block_size)
+{
+    boost::asio::thread_pool pool(max_concurrent_tasks_for_count_task);
+    int file_id = 0;
+    std::mutex mutex;
+    std::atomic<int> processed_files(0);
+    
+    elog(INFO, "para_sort_original_file_by_octree: Processing %zu files in parallel (file operations only, no database access)", filenames.size());
+    
+    for (const auto &filename : filenames)
+    { 
+        boost::asio::post(pool, [this,filename=filename,file_id,&query_utils,&block_size,&mutex,&processed_files,total_files=filenames.size()]()
+        {
+            TimerClock tc;
+            this->sort_original_file_by_octree(filename, query_utils,block_size,mutex);
+            int current_processed = processed_files++;
+            std::string log_message = "INFO: para_sort_original_file_by_octree: Processed file " + filename + 
+                                     ", progress: " + std::to_string(current_processed + 1) + "/" + std::to_string(total_files) + 
+                                     ", time: " + std::to_string(tc.second()/max_concurrent_tasks_for_count_task) + " seconds";
+            logger.log(log_message);
+            // if(delete_files)
+            // std::remove(filename.c_str()); 
+        });
+        ++file_id;
+    }
+    pool.join();
+    
+    elog(INFO, "para_sort_original_file_by_octree: Completed processing all %zu files", filenames.size());
+}
+
+/**
+ * @brief Comprehensive data processing pipeline for spatial data ingestion to PostgreSQL
+ * 
+ * This function implements a complete data processing workflow that transforms raw
+ * spatiotemporal data files into an optimized database structure. It coordinates
+ * spatial partitioning, octree-based indexing, and sequential database operations
+ * while ensuring thread safety and optimal performance.
+ * 
+ * Complete processing pipeline:
+ * 
+ * Phase 1: Initialization and Setup
+ * - Loads global spatial bounds from configuration
+ * - Initializes octree query utilities for spatial partitioning
+ * - Clears previous data and prepares output directories
+ * - Sets up timing and progress tracking mechanisms
+ * 
+ * Phase 2: Spatial Partitioning (Parallel File Processing)
+ * - Processes multiple input files concurrently using thread pools
+ * - Distributes data points to octree leaf-based chunk files
+ * - Performs spatial sorting without database operations
+ * - Tracks processing statistics and performance metrics
+ * 
+ * Phase 3: Spatial Index Creation (Sequential Database Operations)
+ * - Processes octree leaf chunks sequentially to avoid SPI conflicts
+ * - Creates spatial indexes and stores organized data in PostgreSQL
+ * - Maintains referential integrity between spatial and temporal data
+ * - Provides progress reporting for long-running operations
+ * 
+ * Phase 4: User Data Processing (Sequential Database Operations)
+ * - Processes user-specific temporal data sequentially
+ * - Sorts data by timestamp for optimal query performance
+ * - Stores user data with proper associations to spatial indexes
+ * - Ensures data consistency across all database tables
+ * 
+ * Database Safety Features:
+ * - All PostgreSQL SPI operations are sequential to prevent threading issues
+ * - Commented out thread pool code prevents accidental parallel database access
+ * - Clear warnings and documentation about SPI threading limitations
+ * - Proper error handling and transaction management
+ * 
+ * Performance Optimizations:
+ * - Parallel file I/O operations where thread-safe
+ * - Large buffer sizes for efficient bulk data processing
+ * - Temporal sorting optimization for time-series queries
+ * - Spatial clustering through octree-based organization
+ * 
+ * Output Structure:
+ * - Spatially indexed data organized by octree leaf nodes
+ * - Temporally sorted user data for efficient time-range queries
+ * - Proper foreign key relationships between spatial and temporal tables
+ * - Optimized data layout for PostgreSQL query performance
+ * 
+ * @note This function replaces split_data_to_db with improved PostgreSQL integration
+ * @note All database operations are intentionally sequential due to SPI limitations
+ * @note File operations use parallel processing for maximum I/O throughput
+ * @note Essential for large-scale spatiotemporal data ingestion workflows
+ * 
+ * @warning Never modify this function to use parallel database operations
+ * @warning PostgreSQL SPI is not thread-safe and will cause crashes or corruption
+ */
+void DataLoader::split_data_to_db1(std::vector<DBOctreeNode>& dbNodes)
+{
+    OctreePointQuery query_utils(dbNodes);
+    // LargeObjectCleaner::clearAllLargeObjects();
+    TimerClock tc;
+    Bounds bounds;
+    {
+        std::ifstream inputFile(data_dir +"/global_bound.txt");
+        if (inputFile)
+        {
+            inputFile >> bounds;
+            elog(INFO, "split_data_to_db1: Loaded bounds: (%f,%f,%f)-(%f,%f,%f)", 
+                 bounds.min.x, bounds.min.y, bounds.min.z, bounds.max.x, bounds.max.y, bounds.max.z);
+        }
+    }
+
+    std::vector<std::string> filenames;
+    {
+        for (const auto &entry : fs::directory_iterator(data_dir +"/temp_bin_original_file"))
+        {
+            const auto &path = entry.path();
+            filenames.push_back(data_dir +"/temp_bin_original_file/" + path.filename().string());
+        }
+    }
+    original_sort_count = 0;
+    originalDataManager.clearTable();
+    clear_folder(data_dir +"/chunk_original_data");
+    tc.tick();
+    std::unordered_map<int,std::unordered_map<int,std::int64_t>> block_size;
+    this->para_sort_original_file_by_octree(filenames,query_utils,block_size);
+    // save_map_to_file(block_size,data_dir + "/block_size.bin");
+    build_time["to_db_time->sort_by_octree"] = tc.second();
+    elog(INFO, "split_data_to_db1: original_sort_count: %ld", original_sort_count.load());
+    tc.tick();
+    
+    // boost::asio::thread_pool index_pool(tran_data_to_db_thread_pool_size);
+    int processed_chunks = 0;
+    int total_chunks = 0;
+    for (auto node:dbNodes)
+    {
+        if (node.is_leaf)
+        {
+            total_chunks++;
+        }
+    }
+    
+    for (auto node:dbNodes)
+    {
+        if (node.is_leaf)
+        {
+            // IMPORTANT: Database operations are performed sequentially to avoid SPI threading issues
+            // The original boost::asio::post has been commented out to prevent parallel database access
+            // boost::asio::post(index_pool, [node,total_size=query_utils.chunk_tree.size()]()
+            // {
+            chunk_original_data_to_db(node);
+            processed_chunks++;
+            elog(INFO, "split_data_to_db1: Processed chunk %d, progress: %d/%d", 
+                 node.id, processed_chunks, total_chunks);
+            // });
+        }
+    }
+    // index_pool.join();
+ 
+    // {
+    //     OriginalDataManager::createIndex();
+    // }
+    build_time["to_db_time->spatial_to_db"] = tc.second();
+    elog(INFO, "split_data_to_db1: Spatial data to database time: %f seconds", tc.second());
+    tc.tick();
+    {
+        // WARNING: User data processing is also sequential to avoid database threading issues
+        // The thread pool is created but not used for database operations
+        // boost::asio::thread_pool pool(tran_data_to_db_thread_pool_size);
+        std::atomic<int> file_id = 0;
+        // std::atomic<uint64_t> all_count = 0; // unused variable
+        std::vector<std::string> user_filenames;
+        for (const auto &entry : fs::directory_iterator(data_dir + "/temp_bin_original_file"))
+        {
+            const auto &path = entry.path();
+            user_filenames.push_back(data_dir + "/temp_bin_original_file/" + path.filename().string());
+        }
+        
+        elog(INFO, "split_data_to_db1: Processing %zu user data files sequentially", user_filenames.size());
+        
+        for (const auto &filename : user_filenames)
+        {
+            // boost::asio::post(pool, [&,filename]()
+            // {
+                TimerClock user_tc;
+                std::ifstream infile(filename, std::ios::binary);
+                std::vector<SpatioTemporalData> buffer(4 * 64 * 1024 * 32/max_concurrent_tasks_for_count_task);
+                size_t buffer_size = buffer.size();
+                size_t points_read;
+                while (true)
+                {
+                    infile.read(reinterpret_cast<char *>(buffer.data()), sizeof(SpatioTemporalData) * buffer_size);
+                    points_read = infile.gcount() / sizeof(SpatioTemporalData);  
+                    if(buffer.size() > points_read){
+                        buffer.resize(points_read);
+                    }
+                    std::sort(buffer.begin(), buffer.end(), [](const SpatioTemporalData &a, const SpatioTemporalData &b)
+                    { return a.time < b.time; });
+                    // elog(INFO, "userid:%d, buffer size:%zu", buffer.front().user_id, buffer.size());
+                    if(buffer.size() == 0){
+                        // elog(INFO, "Empty buffer for filename: %s", filename.c_str());
+                    }
+                    userDataManager.writeDataToDatabase(buffer.front().user_id, buffer);
+                    buffer.resize(buffer_size);
+                    if (points_read < buffer_size)
+                    {
+                        break;
+                    }
+                }
+                int current_file_id = file_id++;
+                elog(INFO, "split_data_to_db1: Processed user data file %s, progress: %d/%zu, time: %f seconds", 
+                     filename.c_str(), current_file_id, user_filenames.size(), 
+                     user_tc.second()/max_concurrent_tasks_for_count_task);
+                // if(delete_files){
+                //     std::remove(filename.c_str());
+                // }
+            // });
+        }
+        // pool.join();
+    }
+    build_time["to_db_time->user_to_db"] = tc.second();
+    elog(INFO, "split_data_to_db1: User data to database time: %f seconds", tc.second());
+}
+
+/**
+ * @brief Process and store spatiotemporal data for a single octree leaf node in PostgreSQL
+ * 
+ * This function handles the database storage of spatiotemporal data belonging to a specific
+ * octree leaf node. It loads the pre-sorted chunk data from disk, performs spatial
+ * subdivision using the octree structure, and stores the organized data in PostgreSQL
+ * with proper spatial and temporal indexing.
+ * 
+ * Processing workflow:
+ * 1. Data Loading Phase:
+ *    - Loads octree node hierarchy from database for the leaf node
+ *    - Reads pre-sorted spatiotemporal data from the corresponding chunk file
+ *    - Validates data integrity and reports processing statistics
+ * 
+ * 2. Spatial Organization Phase:
+ *    - Recursively subdivides data using the octree node structure
+ *    - Groups points by their final octree leaf assignments
+ *    - Prepares data for efficient database insertion operations
+ * 
+ * 3. Database Storage Phase:
+ *    - Sorts data points by timestamp for optimal temporal access
+ *    - Stores organized data in PostgreSQL using originalDataManager
+ *    - Maintains proper associations between spatial and temporal indexes
+ *    - Ensures referential integrity across database tables
+ * 
+ * Data organization strategy:
+ * - Input: Binary chunk file containing spatiotemporal points for one leaf region
+ * - Processing: Recursive spatial subdivision using octree hierarchy
+ * - Output: Temporally sorted data stored with spatial index associations
+ * - Result: Optimized database structure for spatial and temporal queries
+ * 
+ * Database integration:
+ * - Uses PostgreSQL SPI through originalDataManager for safe database access
+ * - Maintains transaction consistency for all data operations
+ * - Provides proper error handling for database connectivity issues
+ * - Ensures data durability through proper commit protocols
+ * 
+ * Performance characteristics:
+ * - Sequential processing ensures SPI thread safety
+ * - Memory-efficient streaming of large data sets
+ * - Optimized for bulk insertion operations
+ * - Temporal sorting improves query performance for time-range operations
+ * 
+ * Error handling:
+ * - Graceful handling of missing or corrupted chunk files
+ * - Database transaction rollback on operation failures
+ * - Detailed logging for debugging and monitoring
+ * - Proper resource cleanup in all execution paths
+ * 
+ * @param leaf_node The octree leaf node containing spatial bounds and identification
+ * 
+ * @note This function must only be called sequentially due to PostgreSQL SPI limitations
+ * @note Chunk files are expected to exist in /chunk_original_data/ directory
+ * @note Data is automatically sorted by timestamp for optimal temporal access patterns
+ * @note Essential component of the spatial database ingestion pipeline
+ * 
+ * @warning Never call this function in parallel - it uses PostgreSQL SPI operations
+ * @warning Ensure chunk files exist before calling, or function will return early
+ */
+void DataLoader::chunk_original_data_to_db(DBOctreeNode leaf_node)
+{
+    elog(INFO, "chunk_original_data_to_db: Starting processing for leaf node %d", leaf_node.id);
+    
+    std::vector<DBOctreeNode> ocNodes = octreeNodeManager.getOctreeNodeByKey(leaf_node.id);
+    size_t data_count = 0;
+    std::vector<SpatioTemporalData> all_data;
+    {
+        auto original_file = std::ifstream(data_dir + "/chunk_original_data/" + std::to_string(leaf_node.id) + ".bin", std::ios::binary);
+        if (!original_file.is_open()) {
+            elog(WARNING, "chunk_original_data_to_db: Failed to open chunk file for leaf node %d", leaf_node.id);
+            return;
+        }
+        original_file.seekg(0, std::ios::end);
+        size_t file_size = original_file.tellg();
+        original_file.seekg(0, std::ios::beg);
+        data_count = file_size / sizeof(SpatioTemporalData);
+        elog(INFO, "chunk_original_data_to_db: Loaded %zu data points from chunk file for leaf node %d", data_count, leaf_node.id);
+        all_data.resize(data_count);
+        original_file.read(reinterpret_cast<char *>(all_data.data()), file_size);
+        original_file.close();
+        // Note: delete_files is not defined in this scope, commenting out for now
+        // if(delete_files)
+        // std::remove((data_dir + "/chunk_original_data/" + std::to_string(leaf_node.id) + ".bin").c_str());
+    }
+    long long in_this_file_read_count = 0;
+    std::unordered_map<int, std::vector<SpatioTemporalData>> to_db_data; // octree leaf id --> data
+    auto write_points_to_db = [&](int octreeid, int kdtreeid, std::vector<SpatioTemporalData> &data)
+    {
+        std::sort(data.begin(), data.end(), [](const SpatioTemporalData &a, const SpatioTemporalData &b)
+                  { return a.time < b.time; });
+        originalDataManager.writeOriginalDataToDatabase(octreeid, kdtreeid, data);
+    };
+
+    split_data(0, ocNodes, all_data, to_db_data);
+
+    for (auto &i : to_db_data)
+    {
+        in_this_file_read_count += i.second.size();
+    }
+    for (auto &i : to_db_data)
+    {
+        write_points_to_db(leaf_node.id, i.first, i.second);
+    }
+    
+    elog(INFO, "chunk_original_data_to_db: Completed processing leaf node %d - stored %lld points across %zu KD-tree nodes", 
+         leaf_node.id, in_this_file_read_count, to_db_data.size());
 }

@@ -1,4 +1,4 @@
-MODULE_big = tsdmp
+MODULE_big = trace
 
 # Include all our extension source files (all C++)
 OBJS = src/extension.o \
@@ -16,9 +16,9 @@ OBJS = src/extension.o \
        src/safe_logger.o \
        src/original_data_manager.o
 
-EXTENSION = tsdmp
-DATA = tsdmp--1.0.sql
-PGFILEDESC = "TSDMP - Time-Spatial Data Management Platform Extension"
+EXTENSION = trace
+DATA = trace--1.0.sql
+PGFILEDESC = "TRACE - Time-Spatial Trajectory Analysis and Computation Engine Extension"
 
 
 # 使用PGXS构建系统（默认）
@@ -28,7 +28,7 @@ PGFILEDESC = "TSDMP - Time-Spatial Data Management Platform Extension"
 # include $(PGXS)
 # else
 # 仅在明确禁用PGXS时使用传统构建方式
-subdir = contrib/tsdmp
+subdir = contrib/trace
 top_builddir = ../..
 include $(top_builddir)/src/Makefile.global
 include $(top_srcdir)/contrib/contrib-global.mk

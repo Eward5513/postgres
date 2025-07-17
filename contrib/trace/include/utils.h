@@ -1,5 +1,5 @@
-#ifndef TSDMP_UTILS_H
-#define TSDMP_UTILS_H
+#ifndef TRACE_UTILS_H
+#define TRACE_UTILS_H
 
 #include <string>
 #include <vector>
@@ -7,7 +7,11 @@
 #include <chrono>
 #include <cstdint>
 #include <mutex>
+#include <filesystem>
+#include <fstream>
 #include <boost/asio.hpp>
+
+namespace fs = std::filesystem;
 
 class ContinuousRandomGenerator {
     public:
@@ -129,5 +133,135 @@ std::vector<std::pair<T, T>> split(T start, T end, std::int64_t parts) {
 template std::vector<std::pair<double, double>> split(double start, double end, std::int64_t parts);
 template std::vector<std::pair<float, float>> split(float start, float end, std::int64_t parts);
 template std::vector<std::pair<std::int64_t, std::int64_t>> split(std::int64_t start, std::int64_t end, std::int64_t parts);
+
+class BinaryKVStorage {
+    private:
+        fs::path base_dir;
+    
+        // 确保目录存在
+        void ensure_directory_exists(const fs::path& dir) {
+            if (!fs::exists(dir)) {
+                fs::create_directories(dir);
+            }
+        }
+    
+        // 获取key对应的文件路径
+        fs::path get_file_path(const std::string& key) const {
+            return base_dir / (key + ".bin");
+        }
+    
+    public:
+        // 构造函数，设置公共文件夹路径
+        explicit BinaryKVStorage(const std::string& base_path) 
+            : base_dir(base_path) {
+            ensure_directory_exists(base_dir);
+        }
+    
+        // 写入数据
+        template<typename T>
+        bool write(const std::string& key, const std::vector<T>& data) {
+            fs::path file_path = get_file_path(key);
+            
+            std::ofstream out(file_path, std::ios::binary);
+            if (!out.is_open()) {
+                return false;
+            }
+    
+            // 写入数据
+            out.write(reinterpret_cast<const char*>(data.data()), 
+                        data.size() * sizeof(T));
+            
+            return out.good();
+        }
+        // 读取数据
+        template<typename T>
+        std::vector<T> read(const std::string& key) {
+            fs::path file_path = get_file_path(key);
+            std::vector<T> result;
+    
+            std::ifstream in(file_path, std::ios::binary | std::ios::ate);
+            if (!in.is_open()) {
+                return result; // 返回空vector
+            }
+    
+            // 获取文件大小
+            std::streamsize size = in.tellg();
+            in.seekg(0, std::ios::beg);
+    
+            // 计算元素数量
+            size_t count = size / sizeof(T);
+            if (count == 0) {
+                return result;
+            }
+    
+            // 读取数据
+            result.resize(count);
+            in.read(reinterpret_cast<char*>(result.data()), size);
+            
+            return result;
+        }
+    
+        // 检查key是否存在
+        bool exists(const std::string& key) const {
+            return fs::exists(get_file_path(key));
+        }
+    
+        // 删除key对应的文件
+        bool remove(const std::string& key) {
+            
+            return fs::remove(get_file_path(key));
+        }
+};
+
+class FileLockManager {
+    public:
+        explicit FileLockManager(size_t lock_count = 2000) : lock_pool_(lock_count) {}
+    
+        // 锁定指定的文件名
+        void lock(const std::string& file_name) {
+            size_t lock_index = hash(file_name) % lock_pool_.size();
+            lock_pool_[lock_index].lock(); // 锁定对应的互斥锁
+        }
+    
+        // 解锁指定的文件名
+        void unlock(const std::string& file_name) {
+            size_t lock_index = hash(file_name) % lock_pool_.size();
+            lock_pool_[lock_index].unlock(); // 解锁对应的互斥锁
+        }
+    
+    private:
+        // 哈希函数，用于将文件名映射到锁
+        size_t hash(const std::string& file_name) const {
+            return std::hash<std::string>{}(file_name);
+        }
+                      // 锁池大小
+        std::vector<std::mutex> lock_pool_;       // 直接存储互斥锁，避免动态分配
+};
+
+inline FileLockManager files_lock;
+
+template <typename T>
+inline T max3(T a, T b, T c) {
+    return std::max(a, std::max(b, c));
+}
+
+/**
+ * @brief Template function for generating random numbers in a range
+ * @tparam T Numeric type for the random number (default: float)
+ * @param min Minimum value (inclusive)
+ * @param max Maximum value (exclusive)
+ * @return Random number in the specified range
+ * 
+ * Thread-safe random number generator using static thread_local generators
+ * to avoid contention in multi-threaded environments.
+ */
+ template <typename T = float>
+ inline T random_range(T min = 0.0, T max = 1.0)
+ {
+     static std::random_device rd;
+     static std::mt19937 gen(rd());
+     std::uniform_real_distribution<T> dis(min, max);
+     return dis(gen);
+ }
 
 #endif

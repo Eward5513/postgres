@@ -1,5 +1,5 @@
-#ifndef TSDMP_SAFE_LOGGER_H
-#define TSDMP_SAFE_LOGGER_H
+#ifndef TRACE_SAFE_LOGGER_H
+#define TRACE_SAFE_LOGGER_H
 
 #include <string>
 #include <mutex>
@@ -146,4 +146,4 @@ private:
  */
 extern SafeLogger& logger;
 
-#endif // TSDMP_SAFE_LOGGER_H 
+#endif // TRACE_SAFE_LOGGER_H 
