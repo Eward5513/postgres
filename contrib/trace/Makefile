@@ -12,6 +12,7 @@ OBJS = src/extension.o \
        src/mesh_connection_manager.o \
        src/pgutils.o \
        src/spatiotemporal_data.o \
+       src/metric.o \
        src/utils.o \
        src/safe_logger.o \
        src/original_data_manager.o

@@ -254,3 +254,72 @@ bool OctreeNodeManager::validateConversion(const OctreeNode* originalNode, const
 
     return true;
 }
+
+void get_leaves_octree(int input_id, std::vector<DBOctreeNode> &nodes,std::vector<DBOctreeNode> &leaves){
+    std::queue<int> node_ids;
+    node_ids.push(input_id);
+    while(!node_ids.empty()){
+        auto node_id = node_ids.front();
+        node_ids.pop();
+        auto &node = nodes[node_id];
+        if(node.is_leaf){
+            leaves.push_back(node);
+            continue;
+        }
+        for(int i = 0;i<8;++i){
+            if(node.children[i]!=-1){
+                node_ids.push(node.children[i]);
+            }
+        }
+    }
+}
+
+void range_qurey_octree(SpatialBounds &bound,std::vector<DBOctreeNode> &nodes,std::vector<DBOctreeNode> &leaves){
+    std::queue<int> node_ids;
+    node_ids.push(0);
+    while(!node_ids.empty()){
+        auto node_id = node_ids.front();
+        node_ids.pop();
+        auto &node = nodes[node_id];
+        if(node.bound.intersects(bound)){
+            if(node.is_leaf){
+                leaves.push_back(node);
+                continue;
+            }
+            if(bound.contains(node.bound)){
+                get_leaves_octree(node.id,nodes,leaves);
+                continue;
+            }
+            for(int i = 0;i<8;++i){
+                if(node.children[i]!=-1){
+                    node_ids.push(node.children[i]);
+                }
+            }
+        }
+    }
+}
+
+void range_qurey_octree(SpatialPoint &center, float radius,std::vector<DBOctreeNode> &nodes,std::vector<DBOctreeNode> &leaves){
+    std::queue<int> node_ids;
+    node_ids.push(0);
+    while(!node_ids.empty()){
+        auto node_id = node_ids.front();
+        node_ids.pop();
+        auto &node = nodes[node_id];
+        if(pointToBoundsDistance(center,node.bound) <= radius){
+            if(node.is_leaf){
+                leaves.push_back(node);
+                continue;
+            }
+            if(pointToBoundsMaxDistance(center,node.bound)<=radius){
+                get_leaves_octree(node.id,nodes,leaves);
+                continue;
+            }
+            for(int i = 0;i<8;++i){
+                if(node.children[i]!=-1){
+                    node_ids.push(node.children[i]);
+                }
+            }
+        }
+    }
+}

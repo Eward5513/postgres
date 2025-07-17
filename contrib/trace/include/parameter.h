@@ -11,6 +11,7 @@ inline int max_concurrent_tasks_for_read_bound_task = 80;
 inline int max_concurrent_tasks_for_count_task = 80;
 inline int max_concurrent_task_across_chunk = 40;
 inline int max_concurrent_task_inside_chunk = 4;
+inline int thread_pool_size = 32;
 
 // inline int tran_data_to_db_thread_pool_size = 25;
 

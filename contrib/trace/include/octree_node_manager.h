@@ -200,4 +200,9 @@ private:
  */
 extern OctreeNodeManager& octreeNodeManager;
 
+void range_qurey_octree(SpatialPoint &center, float radius,std::vector<DBOctreeNode> &nodes,std::vector<DBOctreeNode> &leaves);
+void range_qurey_octree(SpatialBounds &bound,std::vector<DBOctreeNode> &nodes,std::vector<DBOctreeNode> &leaves);
+void get_leaves_octree(int input_id, std::vector<DBOctreeNode> &nodes,std::vector<DBOctreeNode> &leaves);
+
+
 #endif // OCTREE_NODE_MANAGER_H

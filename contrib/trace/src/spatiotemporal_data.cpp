@@ -9,6 +9,9 @@
 #include <cmath>
 #include <cstdlib>
 #include <vector>
+#include <algorithm>
+#include <random>
+#include <limits>
 
 #include "nlohmann/json.hpp"
 
@@ -63,24 +66,40 @@ std::string SpatioTemporalData::toString() const {
     return oss.str();
 }
 
-void SpatioTemporalData::print() {
-    std::cout << x << " / " << y << " / " << z << " / " << " / " << pid
-         << " / " << (tid) << " / " << (fid) << std::endl;
+// ============================================================================
+// SpatioTemporalData Implementations
+// ============================================================================
+
+void SpatioTemporalData::print() const {
+    std::cout << "SpatioTemporalData: (" << x << ", " << y << ", " << z 
+              << "), time: " << time << ", tid: " << static_cast<int>(tid) 
+              << ", fid: " << fid << ", pid: " << pid 
+              << ", foreign_key: " << foreign_key << std::endl;
 }
 
 void swap(SpatioTemporalData& a, SpatioTemporalData& b) noexcept {
-    static_assert(std::is_trivially_copyable_v<SpatioTemporalData>,
-                  "SpatioTemporalData must be trivially copyable for memcpy-based swap.");
-    static_assert(std::is_trivially_destructible_v<SpatioTemporalData>,
-                  "SpatioTemporalData must be trivially destructible for memcpy-based swap.");
-
-    char temp[sizeof(SpatioTemporalData)];
-    std::memcpy(temp, &a, sizeof(SpatioTemporalData)); // 将 a 拷贝到临时空间
-    std::memcpy(&a, &b, sizeof(SpatioTemporalData));   // 将 b 拷贝到 a
-    std::memcpy(&b, temp, sizeof(SpatioTemporalData)); // 将临时空间拷贝到 b
+    std::swap(a.x, b.x);
+    std::swap(a.y, b.y);
+    std::swap(a.z, b.z);
+    std::swap(a.tid, b.tid);
+    std::swap(a.fid, b.fid);
+    std::swap(a.pid, b.pid);
+    std::swap(a.foreign_key, b.foreign_key);
+    std::swap(a.user_id, b.user_id);
+    std::swap(a.time, b.time);
+    std::swap(a.external_data, b.external_data);
+    std::swap(a.is_deleted, b.is_deleted);
 }
 
-// Bounds implementations
+uint32_t SpatioTemporalData::normalizeCoordinate(float coord, float minCoord, float maxCoord) const {
+    const uint32_t maxRange = 0xFFFFFFFF; // 2^32 - 1
+    return static_cast<uint32_t>((coord - minCoord) / (maxCoord - minCoord) * maxRange);
+}
+
+// ============================================================================
+// Bounds Implementations
+// ============================================================================
+
 Bounds Bounds::createBounds(const SpatioTemporalData& center, double width, double height, double depth) {
     Bounds bounds;
     bounds.min.x = center.x - width / 2;
@@ -247,7 +266,10 @@ std::ostream& operator<<(std::ostream& os, const Bounds& bounds) {
     return os;
 }
 
-// SpatialBounds implementations
+// ============================================================================
+// SpatialBounds Implementations
+// ============================================================================
+
 SpatialBounds SpatialBounds::limit_max() {
     SpatialBounds result;
     result.min.x = result.min.y = result.min.z = -std::numeric_limits<float>::max();
@@ -354,4 +376,293 @@ uint64_t indexOfPoint(float x, float y, float z, SpatialBounds bound, int level)
     }
     uint64_t index = interleaveBits(x_, y_, z_,level);
     return index;
+}
+
+// ============================================================================
+// Polygon Implementations
+// ============================================================================
+
+bool Polygon::contains(const SpatialPoint& point) const {
+    for (const Triangle& triangle : triangles) {
+        if (isPointInTriangle(triangle, point, height)) {
+            return true;
+        }
+    }
+    return false;
+}
+
+bool Polygon::intersects(const SpatialBounds& bound) const {
+    for (const Triangle& triangle : triangles) {
+        if (isTriangleIntesectBound(triangle, bound, height)) {
+            return true;
+        }
+    }
+    return false;
+}
+
+SpatialBounds Polygon::getBounds() const {
+    if (triangles.empty()) {
+        return SpatialBounds();
+    }
+
+    SpatialBounds bounds;
+    bool first = true;
+    
+    for (const Triangle& triangle : triangles) {
+        SpatialPoint normal = triangle.normal();
+        SpatialPoint p1_ext = triangle.p1 + normal * height;
+        SpatialPoint p2_ext = triangle.p2 + normal * height;
+        SpatialPoint p3_ext = triangle.p3 + normal * height;
+
+        if (first) {
+            bounds.min = bounds.max = triangle.p1;
+            first = false;
+        }
+        
+        bounds.updateBounds(triangle.p1);
+        bounds.updateBounds(triangle.p2);
+        bounds.updateBounds(triangle.p3);
+        bounds.updateBounds(p1_ext);
+        bounds.updateBounds(p2_ext);
+        bounds.updateBounds(p3_ext);
+    }
+
+    return bounds;
+}
+
+Triangle Polygon::generateRandomTriangle(const SpatialBounds& bounds) {
+    static std::random_device rd;
+    static std::mt19937 gen(rd());
+    
+    std::uniform_real_distribution<float> dist_x(bounds.min.x, bounds.max.x);
+    std::uniform_real_distribution<float> dist_y(bounds.min.y, bounds.max.y);
+    std::uniform_real_distribution<float> dist_z(bounds.min.z, bounds.max.z);
+    
+    SpatialPoint p1(dist_x(gen), dist_y(gen), dist_z(gen));
+    SpatialPoint p2(dist_x(gen), dist_y(gen), dist_z(gen));
+    SpatialPoint p3(dist_x(gen), dist_y(gen), dist_z(gen));
+    
+    return Triangle(p1, p2, p3);
+}
+
+Triangle Polygon::generateNextTriangle(const SpatialBounds& bounds, const Triangle& previous) {
+    static std::random_device rd;
+    static std::mt19937 gen(rd());
+    
+    std::uniform_real_distribution<float> dist_x(bounds.min.x, bounds.max.x);
+    std::uniform_real_distribution<float> dist_y(bounds.min.y, bounds.max.y);
+    std::uniform_real_distribution<float> dist_z(bounds.min.z, bounds.max.z);
+    
+    SpatialPoint normal = previous.normal();
+    SpatialPoint randomPoint(dist_x(gen), dist_y(gen), dist_z(gen));
+    SpatialPoint p3 = randomPoint + normal * (previous.p1 - randomPoint).dot(normal);
+    
+    return Triangle(previous.p1, previous.p2, p3);
+}
+
+Polygon Polygon::generateMesh(const SpatialBounds& bounds, int triangleCount, float height) {
+    Polygon mesh;
+    mesh.height = height;
+
+    if (triangleCount > 0) {
+        Triangle first = generateRandomTriangle(bounds);
+        mesh.triangles.push_back(first);
+
+        for (int i = 1; i < triangleCount; ++i) {
+            Triangle next = generateNextTriangle(bounds, mesh.triangles.back());
+            mesh.triangles.push_back(next);
+        }
+    }
+
+    return mesh;
+}
+
+// ============================================================================
+// Trajectory Implementations
+// ============================================================================
+
+nlohmann::json Trajectory::to_json() const {
+    nlohmann::json json_obj;
+    json_obj["id"] = id;
+    
+    std::vector<std::string> serialized_points;
+    for (const auto& point : points) {
+        serialized_points.push_back(base64_encode(point.to_binary()));
+    }
+    json_obj["points"] = serialized_points;
+    return json_obj;
+}
+
+Trajectory Trajectory::from_json(const nlohmann::json& json_obj) {
+    Trajectory traj;
+    traj.id = json_obj.at("id").get<int>();
+    
+    for (const auto& point_str : json_obj.at("points")) {
+        traj.points.push_back(SpatioTemporalData::from_binary(base64_decode(point_str.get<std::string>())));
+    }
+    return traj;
+}
+
+void Trajectory::sort_by_timestamp() {
+    std::sort(points.begin(), points.end(), [](const SpatioTemporalData& a, const SpatioTemporalData& b) {
+        return a.time < b.time;
+    });
+}
+
+void Trajectory::cut_by_time(float min_time, float max_time) {
+    points.erase(std::remove_if(points.begin(), points.end(),
+        [min_time, max_time](const SpatioTemporalData& data) {
+            return data.time < min_time || data.time > max_time;
+        }),
+        points.end());
+}
+
+// ============================================================================
+// Distance Function Implementations
+// ============================================================================
+
+float pointToBoundsDistance(const SpatialPoint& point, const SpatialBounds& bounds) {
+    float dx = std::max({bounds.min.x - point.x, 0.0f, point.x - bounds.max.x});
+    float dy = std::max({bounds.min.y - point.y, 0.0f, point.y - bounds.max.y});
+    float dz = std::max({bounds.min.z - point.z, 0.0f, point.z - bounds.max.z});
+    return std::sqrt(dx * dx + dy * dy + dz * dz);
+}
+
+float pointToBoundsMaxDistance(const SpatialPoint& point, const SpatialBounds& bounds) {
+    float dx = std::max(std::abs(point.x - bounds.min.x), std::abs(point.x - bounds.max.x));
+    float dy = std::max(std::abs(point.y - bounds.min.y), std::abs(point.y - bounds.max.y));
+    float dz = std::max(std::abs(point.z - bounds.min.z), std::abs(point.z - bounds.max.z));
+    return std::sqrt(dx * dx + dy * dy + dz * dz);
+}
+
+float pointToBoundsDistance(const SpatioTemporalData& point, const SpatialBounds& bounds) {
+    float dx = std::max({bounds.min.x - point.x, 0.0f, point.x - bounds.max.x});
+    float dy = std::max({bounds.min.y - point.y, 0.0f, point.y - bounds.max.y});
+    float dz = std::max({bounds.min.z - point.z, 0.0f, point.z - bounds.max.z});
+    return std::sqrt(dx * dx + dy * dy + dz * dz);
+}
+
+float pointToBoundsDistance(const SpatialPoint& point, const Bounds& bounds) {
+    float dx = std::max({bounds.min.x - point.x, 0.0f, point.x - bounds.max.x});
+    float dy = std::max({bounds.min.y - point.y, 0.0f, point.y - bounds.max.y});
+    float dz = std::max({bounds.min.z - point.z, 0.0f, point.z - bounds.max.z});
+    return std::sqrt(dx * dx + dy * dy + dz * dz);
+}
+
+float pointToBoundsDistance(const SpatioTemporalData& point, const Bounds& bounds) {
+    float dx = std::max({bounds.min.x - point.x, 0.0f, point.x - bounds.max.x});
+    float dy = std::max({bounds.min.y - point.y, 0.0f, point.y - bounds.max.y});
+    float dz = std::max({bounds.min.z - point.z, 0.0f, point.z - bounds.max.z});
+    return std::sqrt(dx * dx + dy * dy + dz * dz);
+}
+
+float calculateDTWDistance(const std::vector<SpatioTemporalData>& traj1, const std::vector<SpatioTemporalData>& traj2) {
+    int m = traj1.size();
+    int n = traj2.size();
+    
+    if (m == 0 || n == 0) return std::numeric_limits<float>::infinity();
+    
+    std::vector<std::vector<float>> dtw(m + 1, std::vector<float>(n + 1, std::numeric_limits<float>::infinity()));
+    dtw[0][0] = 0;
+    
+    for (int i = 1; i <= m; ++i) {
+        for (int j = 1; j <= n; ++j) {
+            float cost = pointToPointDistance(traj1[i - 1], traj2[j - 1]);
+            dtw[i][j] = cost + std::min({dtw[i - 1][j], dtw[i][j - 1], dtw[i - 1][j - 1]});
+        }
+    }
+    
+    return dtw[m][n];
+}
+
+float calculateDTWDistance(const Trajectory& traj1, const Trajectory& traj2) {
+    return calculateDTWDistance(traj1.points, traj2.points);
+}
+
+float calculateCumulativeNearestNeighborDistance(const Trajectory& traj1, const Trajectory& traj2) {
+    int m = traj1.points.size();
+    int n = traj2.points.size();
+    
+    if (m == 0 || n == 0) return std::numeric_limits<float>::infinity();
+
+    float totalDistance = 0.0;
+
+    for (int i = 0; i < m; ++i) {
+        float minDistance = std::numeric_limits<float>::infinity();
+        
+        for (int j = 0; j < n; ++j) {
+            float distance = pointToPointDistance(traj1.points[i], traj2.points[j]);
+            if (distance < minDistance) {
+                minDistance = distance;
+            }
+        }
+        
+        totalDistance += minDistance;
+    }
+
+    return totalDistance / m;
+}
+
+float calculateAverageDistance(const Trajectory& traj1, const Trajectory& traj2) {
+    if (traj1.points.empty() || traj2.points.empty()) {
+        return std::numeric_limits<float>::infinity();
+    }
+    
+    float totalDistance = 0.0;
+    int count = 0;
+    
+    for (const auto& p1 : traj1.points) {
+        for (const auto& p2 : traj2.points) {
+            totalDistance += pointToPointDistance(p1, p2);
+            ++count;
+        }
+    }
+    
+    return totalDistance / count;
+}
+
+// ============================================================================
+// Query Function Implementations
+// ============================================================================
+
+std::vector<std::pair<float, Trajectory>> trajectory_kNN_query_bruteforce(
+    Trajectory& query_center, int k, float min_time, float max_time, 
+    std::unordered_map<int, Trajectory>& data) {
+    
+    std::vector<std::pair<float, Trajectory>> dataVector;
+    dataVector.reserve(data.size());
+    
+    for (auto& [id, trajectory] : data) {
+        dataVector.push_back({0, trajectory});
+    }
+
+    const int thread_pool_size = std::thread::hardware_concurrency();
+    std::vector<std::future<void>> futures;
+    size_t chunk_size = dataVector.size() / thread_pool_size;
+    
+    for (int i = 0; i < thread_pool_size; ++i) {
+        futures.push_back(std::async(std::launch::async, [&, i] {
+            size_t start = i * chunk_size;
+            size_t end = (i == thread_pool_size - 1) ? dataVector.size() : (i + 1) * chunk_size;
+            for (size_t j = start; j < end; ++j) {
+                dataVector[j].second.cut_by_time(min_time, max_time);
+                dataVector[j].first = calculateDTWDistance(query_center, dataVector[j].second);
+            }
+        }));
+    }
+
+    for (auto& fut : futures) {
+        fut.get();
+    }
+
+    std::sort(dataVector.begin(), dataVector.end(),
+        [](const std::pair<float, Trajectory>& a, const std::pair<float, Trajectory>& b) {
+            return a.first < b.first;
+        });
+    
+    if (dataVector.size() > k) {
+        dataVector.resize(k);
+    }
+
+    return dataVector;
 }
