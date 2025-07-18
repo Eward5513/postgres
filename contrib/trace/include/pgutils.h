@@ -214,6 +214,98 @@ public:
      * @return DualKeyBinarySelectResult* query result, caller needs to free memory
      */
     DualKeyBinarySelectResult* executeBinarySelectAllDualKey(const char* table_name);
+    
+    // ============================================================================
+    // Memory Management Utilities
+    // ============================================================================
+    
+    /**
+     * @brief Allocate memory in specified PostgreSQL memory context
+     * 
+     * This function switches to the specified memory context, allocates memory
+     * using PostgreSQL's palloc(), and then switches back to the original context.
+     * This ensures the allocated memory belongs to the correct memory context
+     * for proper PostgreSQL memory management.
+     * 
+     * @param size Size of memory to allocate in bytes
+     * @param context Target memory context for allocation
+     * @return void* Pointer to allocated memory
+     * @throws PostgreSQL error if allocation fails
+     * 
+     * @note The caller is responsible for ensuring the memory context is valid
+     * @see pfree_in_context() for corresponding deallocation
+     */
+    void* palloc_in_context(Size size, MemoryContext context);
+    
+    /**
+     * @brief Free memory allocated in PostgreSQL memory context
+     * 
+     * Safely frees memory that was allocated using PostgreSQL's memory management
+     * functions. This function checks for null pointers before attempting to free
+     * the memory to prevent crashes.
+     * 
+     * @param ptr Pointer to memory to free (can be NULL)
+     * @param context Memory context (currently unused but kept for API consistency)
+     * 
+     * @note This function is safe to call with NULL pointers
+     * @see palloc_in_context() for corresponding allocation
+     */
+    void pfree_in_context(void* ptr, MemoryContext context);
+    
+    /**
+     * @brief Duplicate string in specified PostgreSQL memory context
+     * 
+     * Creates a copy of the input string in the specified memory context using
+     * PostgreSQL's pstrdup() function. This ensures the string copy is properly
+     * managed by PostgreSQL's memory management system.
+     * 
+     * @param str Source string to duplicate (can be NULL)
+     * @param context Target memory context for the string copy
+     * @return char* Pointer to duplicated string, or NULL if input was NULL
+     * @throws PostgreSQL error if allocation fails
+     * 
+     * @note The returned string is automatically freed when the memory context is reset
+     * @see palloc_in_context() for related memory allocation
+     */
+    char* pstrdup_in_context(const char* str, MemoryContext context);
+    
+    // ============================================================================
+    // Array Processing Utilities  
+    // ============================================================================
+    
+    /**
+     * @brief Extract string array from PostgreSQL ArrayType
+     * 
+     * Converts a PostgreSQL ArrayType (TEXT[]) into a C-style array of strings.
+     * This function handles PostgreSQL's internal array representation and
+     * converts it to a format that can be easily used in C++ code.
+     * 
+     * The function properly handles:
+     * - NULL array elements (converted to NULL pointers)
+     * - Variable-length text elements
+     * - Memory allocation for the result array
+     * 
+     * @param array PostgreSQL ArrayType containing TEXT elements
+     * @param n_elements Output parameter: number of elements in the array
+     * @return char** Array of string pointers (allocated with palloc)
+     * @throws PostgreSQL error if array processing fails
+     * 
+     * @note The caller is responsible for freeing the returned array and its elements
+     * @note NULL elements in the input array result in NULL pointers in the output
+     * 
+     * Example usage:
+     * @code
+     * int count;
+     * char** strings = extract_string_array(pg_array, &count);
+     * for (int i = 0; i < count; i++) {
+     *     if (strings[i] != NULL) {
+     *         // Process string
+     *     }
+     * }
+     * // Free memory when done
+     * @endcode
+     */
+    char** extract_string_array(ArrayType* array, int* n_elements);
 
 private:
     /**

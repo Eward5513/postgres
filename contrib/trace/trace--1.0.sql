@@ -86,6 +86,14 @@ CREATE TABLE IF NOT EXISTS original_data (
     PRIMARY KEY (key1, key2)
 );
 
+-- 轨迹数据存储表 (用于存储二进制格式的轨迹数据)
+CREATE TABLE IF NOT EXISTS trajectory_table (
+    id INT PRIMARY KEY,
+    data BYTEA,
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+);
+
 -- 函数声明
 
 -- 数据加载函数

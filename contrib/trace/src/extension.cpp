@@ -23,11 +23,6 @@ PG_FUNCTION_INFO_V1(trace_get_config);
 MemoryContext trace_memory_context = NULL;
 MemoryContext trace_query_context = NULL;
 
-// Global variable definitions (declared as extern in header)
-SimpleBounds global_bounds;
-std::vector<std::string> data_source_files;
-std::map<std::string, std::string> config_map;
-
 // Static variables
 static bool trace_initialized = false;
 

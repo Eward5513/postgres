@@ -4,6 +4,7 @@
 #include <filesystem>
 #include <boost/asio.hpp>
 #include <boost/thread.hpp>
+#include <boost/beast/core/detail/base64.hpp>
 
 namespace fs = std::filesystem;
 
@@ -107,5 +108,20 @@ void ThreadPoolWrapper::on_task_done() {
     if (tasks_pending == 0) {
         cv.notify_all();
     }
+}
+
+std::string base64_encode(const std::string& input) {
+    std::string output;
+    output.resize(boost::beast::detail::base64::encoded_size(input.size()));
+    boost::beast::detail::base64::encode(output.data(), input.data(), input.size());
+    return output;
+}
+
+std::string base64_decode(const std::string& input) {
+    std::string output;
+    output.resize(boost::beast::detail::base64::decoded_size(input.size()));
+    auto result = boost::beast::detail::base64::decode(output.data(), input.data(), input.size());
+    output.resize(result.first); // Resize to the actual size after decoding
+    return output;
 }
 

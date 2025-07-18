@@ -264,4 +264,7 @@ inline T max3(T a, T b, T c) {
      return dis(gen);
  }
 
+ std::string base64_encode(const std::string& input);
+ std::string base64_decode(const std::string& input);
+
 #endif

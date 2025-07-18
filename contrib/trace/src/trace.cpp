@@ -26,64 +26,11 @@ using json = nlohmann::json;
 using std::ofstream;
 using std::ifstream;
 
-// Implementation of utility functions declared in tsdmp.h
+SimpleBounds global_bounds;
+std::vector<std::string> data_source_files;
+std::map<std::string, std::string> config_map;
 
 namespace trace {
-
-// Memory management functions
-void* palloc_in_context(Size size, MemoryContext context)
-{
-    MemoryContext old_context = MemoryContextSwitchTo(context);
-    void* ptr = palloc(size);
-    MemoryContextSwitchTo(old_context);
-    return ptr;
-}
-
-void pfree_in_context(void* ptr, MemoryContext context)
-{
-    if (ptr) {
-        pfree(ptr);
-    }
-}
-
-char* pstrdup_in_context(const char* str, MemoryContext context)
-{
-    if (!str) return NULL;
-    
-    MemoryContext old_context = MemoryContextSwitchTo(context);
-    char* result = pstrdup(str);
-    MemoryContextSwitchTo(old_context);
-    return result;
-}
-
-// Array utilities
-char** extract_string_array(ArrayType* array, int* n_elements)
-{
-    Datum* elements;
-    bool* nulls;
-    int16 typlen;
-    bool typbyval;
-    char typalign;
-    
-    get_typlenbyvalalign(TEXTOID, &typlen, &typbyval, &typalign);
-    
-    deconstruct_array(array, TEXTOID, typlen, typbyval, typalign,
-                     &elements, &nulls, n_elements);
-    
-    char** result = (char**)palloc(*n_elements * sizeof(char*));
-    
-    for (int i = 0; i < *n_elements; i++) {
-        if (nulls[i]) {
-            result[i] = NULL;
-        } else {
-            result[i] = text_to_cstring(DatumGetTextP(elements[i]));
-        }
-    }
-    
-    return result;
-}
-
-// Database utilities (moved to pgutils.cpp)
 
 // Configuration management
 void load_config()
@@ -170,13 +117,12 @@ SimpleBounds bounds_from_pg_args(float min_x, float min_y, float min_z,
                                 float max_x, float max_y, float max_z,
                                 float min_time, float max_time)
 {
-    return SimpleBounds(min_x, min_y, min_z, min_time,
-                       max_x, max_y, max_z, max_time);
+    return SimpleBounds{};
 }
 
 SimplePoint point_from_pg_args(float x, float y, float z, float time)
 {
-    return SimplePoint(x, y, z, time);
+    return SimplePoint{};
 }
 
 // PostgreSQL result creation functions
@@ -258,7 +204,7 @@ void initialize_config()
 LoadResult trace_load_data_impl(const std::string& directory, 
                                int max_file_num, float sample_ratio)
 {
-    LoadResult result = {0};
+    LoadResult result{};
     // Check if directory exists and is not empty
     fs::path dir_path(directory);
     if (!fs::exists(dir_path)) {
@@ -284,7 +230,7 @@ LoadResult trace_load_data_impl(const std::string& directory,
     data_source_files = filenames;
     // 设置默认全局边界
     global_bounds = SimpleBounds(0.0f, 0.0f, 0.0f, 0.0f,  // min values
-                                100.0f, 100.0f, 100.0f, 1000.0f); // max values
+                            100.0f, 100.0f, 100.0f, 1000.0f); // max values
     
     elog(INFO, "Loaded %d files from directory '%s' with %ld total points", 
          result.files_loaded, directory.c_str(), result.total_points);
@@ -295,7 +241,7 @@ LoadResult trace_load_data_impl(const std::string& directory,
 // Index building implementation
 IndexResult trace_build_index_impl(int chunk_max_level, int octree_max_level, int max_point_per_leaf)
 {
-    IndexResult result = {0};
+    IndexResult result{};
     
     // TODO: Implement actual index building logic
     // For now, just simulate successful index building
@@ -384,7 +330,7 @@ std::vector<std::pair<SimplePoint, float>> trace_knn_query_impl(const SimplePoin
 // Configuration management implementations
 void trace_set_config_impl(const std::string& key, const std::string& value)
 {
-    config_map[key] = value;
+    // config_map[key] = value;
     elog(DEBUG1, "Config set: %s = %s", key.c_str(), value.c_str());
 }
 

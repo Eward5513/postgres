@@ -2,7 +2,7 @@ MODULE_big = trace
 
 # Include all our extension source files (all C++)
 OBJS = src/extension.o \
-       src/main.o \
+       src/trace.o \
        src/data_loader.o \
        src/file_sorter.o \
        src/octree_node.o \
@@ -15,7 +15,8 @@ OBJS = src/extension.o \
        src/metric.o \
        src/utils.o \
        src/safe_logger.o \
-       src/original_data_manager.o
+       src/original_data_manager.o \
+       src/trajectory_manager.o
 
 EXTENSION = trace
 DATA = trace--1.0.sql
