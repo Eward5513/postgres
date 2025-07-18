@@ -309,16 +309,27 @@ struct SpatialBounds {
     SpatialPoint min;   ///< Minimum corner of bounding box
     SpatialPoint max;   ///< Maximum corner of bounding box
     
-    // Constructors
-    SpatialBounds();
-    SpatialBounds(const SpatialPoint& min_, const SpatialPoint& max_);
-
-    /**
-     * @brief Expand bounds by a uniform delta in all directions
-     * @param delta Expansion distance
-     * @return New expanded bounds
-     */
-    SpatialBounds expand(float delta) const;
+    SpatialBounds()
+        : min(std::numeric_limits<float>::max(),
+              std::numeric_limits<float>::max(),
+              std::numeric_limits<float>::max()),
+          max(std::numeric_limits<float>::lowest(),
+              std::numeric_limits<float>::lowest(),
+              std::numeric_limits<float>::lowest()) {}
+    SpatialBounds expand(float delta) const {
+        SpatialBounds expandedBounds = *this;
+        expandedBounds.min.x -= delta;
+        expandedBounds.min.y -= delta;
+        expandedBounds.min.z -= delta;
+    
+        expandedBounds.max.x += delta;
+        expandedBounds.max.y += delta;
+        expandedBounds.max.z += delta;
+    
+        return expandedBounds;
+    }
+    SpatialBounds(const SpatialPoint& min_, const SpatialPoint& max_)
+        : min(min_), max(max_) {}
     
     /**
      * @brief Update bounds to include a new point
@@ -338,21 +349,48 @@ struct SpatialBounds {
      * @param other Other bounding box
      * @return Intersection bounds
      */
-    SpatialBounds operator&(const SpatialBounds& other) const;
+    SpatialBounds operator&(const SpatialBounds& other) const{
+        SpatialBounds result = *this;
+        result.min.x = std::max(min.x, other.min.x);
+        result.min.y = std::max(min.y, other.min.y);
+        result.min.z = std::max(min.z, other.min.z);
+        result.max.x = std::min(max.x, other.max.x);
+        result.max.y = std::min(max.y, other.max.y);
+        result.max.z = std::min(max.z, other.max.z);
+        return result;
+    }
     
     /**
      * @brief Compute union of two bounding boxes
      * @param other Other bounding box
      * @return Union bounds
      */
-    SpatialBounds operator|(const SpatialBounds& other) const;
+    SpatialBounds operator|(const SpatialBounds& other) const{
+        SpatialBounds result = *this;
+        result.min.x = std::min(min.x, other.min.x);
+        result.min.y = std::min(min.y, other.min.y);
+        result.min.z = std::min(min.z, other.min.z);
+        result.max.x = std::max(max.x, other.max.x);
+        result.max.y = std::max(max.y, other.max.y);
+        result.max.z = std::max(max.z, other.max.z);
+        return result;
+    }
     
     /**
      * @brief Expand bounds to include a point
      * @param point Point to include
      * @return New bounds including the point
      */
-    SpatialBounds operator|(const SpatialPoint& point) const;
+    SpatialBounds operator|(const SpatialPoint& point) const{
+        SpatialBounds result = *this;
+        result.min.x = std::min(min.x, point.x);
+        result.min.y = std::min(min.y, point.y);
+        result.min.z = std::min(min.z, point.z);
+        result.max.x = std::max(max.x, point.x);
+        result.max.y = std::max(max.y, point.y);
+        result.max.z = std::max(max.z, point.z);
+        return result;
+    }
 
     /**
      * @brief Get geometric center of the bounding box

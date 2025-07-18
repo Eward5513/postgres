@@ -99,7 +99,7 @@ vector<string> DataLoader::load_data()
     elog(INFO, "loaded %zu files from directory '%s'", filenames.size(), this->directory.c_str());
 
     elog(INFO, "clear index table");
-            octreeNodeManager.clearTable();
+    octreeNodeManager.clearTable();
     kdTreeNodeManager.clearTable();
     userDataManager.clearTable();
     meshConnectionManager.clearTable();
