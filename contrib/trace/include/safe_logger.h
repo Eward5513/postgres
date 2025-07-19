@@ -33,7 +33,7 @@ public:
      * @return SafeLogger& Reference to the singleton instance
      */
     static SafeLogger& getInstance();
-    
+
     /**
      * @brief Log a message with default INFO level
      * 
@@ -108,6 +108,14 @@ private:
      * @param message The message to log
      */
     void internalLog(const std::string& level, const std::string& message);
+    
+    /**
+     * @brief Check and initialize log file if necessary
+     * 
+     * This method checks if the log file is open, and if not, initializes it
+     * with proper error handling and logging. Should be called with mutex protection.
+     */
+     void checkLogFile();
     
     /**
      * @brief Get current timestamp as string

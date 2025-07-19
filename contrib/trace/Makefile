@@ -4,7 +4,6 @@ MODULE_big = trace
 OBJS = src/extension.o \
        src/trace.o \
        src/data_loader.o \
-       src/file_sorter.o \
        src/octree_node.o \
        src/userdata_manager.o \
        src/kdtree_node_manager.o \

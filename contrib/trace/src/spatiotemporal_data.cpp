@@ -327,11 +327,10 @@ Bounds Bounds::getChildBounds(int index, const SpatioTemporalData& center) const
  * If first_flag is true, initializes bounds to the point's coordinates.
  * 
  * @param point Point to include in bounds
- * @param first_flag Whether this is the first point (initialize bounds)
  */
-void Bounds::update(const SpatioTemporalData& point, bool first_flag) {
-    flag = false;
+void Bounds::update(const SpatioTemporalData& point) {
     if(first_flag){
+        first_flag = false;
         // Initialize bounds to point coordinates
         min.x = point.x;
         min.y = point.y;
@@ -355,14 +354,18 @@ void Bounds::update(const SpatioTemporalData& point, bool first_flag) {
     max.time = std::max(max.time, point.time);
 }
 
-/**
+/*
  * @brief Update bounds from JSON data
  * 
  * Reconstructs bounds from JSON object containing min/max coordinates
  * and time values. Used for deserialization from stored data.
  * 
  * @param json_data Pointer to nlohmann::json object with bounds data
+ * 
+ * NOTE: This function is commented out because it's not used anywhere in the codebase.
+ * If JSON deserialization is needed in the future, this function can be uncommented.
  */
+/*
 void Bounds::update(const void* json_data) {
     // Convert void* to nlohmann::json reference  
     const nlohmann::json& boundJson = *static_cast<const nlohmann::json*>(json_data);
@@ -376,6 +379,7 @@ void Bounds::update(const void* json_data) {
     max.z = boundJson["max_z"];
     max.time = boundJson["max_time"];
 }
+*/
 
 /**
  * @brief Enhanced containment test with boundary condition handling

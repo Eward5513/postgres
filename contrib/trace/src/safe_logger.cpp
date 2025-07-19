@@ -29,34 +29,6 @@ SafeLogger& logger = SafeLogger::getInstance();
  */
 SafeLogger& SafeLogger::getInstance() {
     static SafeLogger instance;
-    
-    // Initialize log file if not already done
-    if (!instance.log_file_.is_open()) {
-        std::lock_guard<std::mutex> lock(instance.log_mutex_);
-        
-        // Double check after acquiring lock
-        if (!instance.log_file_.is_open()) {
-            // Create directory if it doesn't exist
-            std::filesystem::path filePath(LOG_FILE_PATH);
-            std::filesystem::path dirPath = filePath.parent_path();
-            
-            if (!dirPath.empty() && !std::filesystem::exists(dirPath)) {
-                std::filesystem::create_directories(dirPath);
-            }
-            
-            // Open the log file for writing (append mode)
-            instance.log_file_.open(LOG_FILE_PATH, std::ios::app);
-            
-            if (instance.log_file_.is_open()) {
-                // Write initialization message
-                std::string timestamp = instance.getCurrentTimestamp();
-                instance.log_file_ << "[" << timestamp << "] [INFO] SafeLogger initialized with log file: " 
-                                  << LOG_FILE_PATH << std::endl;
-                instance.log_file_.flush();
-            }
-        }
-    }
-    
     return instance;
 }
 
@@ -107,6 +79,29 @@ void SafeLogger::logWithLevel(const std::string& level, const std::string& messa
 }
 
 /**
+ * @brief Check and initialize log file if necessary
+ * 
+ * This method checks if the log file is open, and if not, initializes it
+ * with proper error handling and logging. This method assumes that the
+ * calling code has already acquired the mutex lock.
+ */
+void SafeLogger::checkLogFile() {
+    // Double check if log file is not open
+    if (!log_file_.is_open()) {
+        // Open the log file for writing (append mode)
+        log_file_.open(LOG_FILE_PATH, std::ios::app);
+        
+        if (log_file_.is_open()) {
+            // Write initialization message
+            std::string timestamp = getCurrentTimestamp();
+            log_file_ << "[" << timestamp << "] [INFO] SafeLogger initialized with log file: " 
+                      << LOG_FILE_PATH << std::endl;
+            log_file_.flush();
+        }
+    }
+}
+
+/**
  * @brief Internal logging method with mutex protection
  * 
  * This method is the core logging function that ensures thread safety
@@ -118,6 +113,9 @@ void SafeLogger::logWithLevel(const std::string& level, const std::string& messa
  */
 void SafeLogger::internalLog(const std::string& level, const std::string& message) {
     std::lock_guard<std::mutex> lock(log_mutex_);
+    
+    // Automatically check and initialize log file if necessary
+    checkLogFile();
     
     std::string timestamp = getCurrentTimestamp();
     

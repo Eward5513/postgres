@@ -465,18 +465,4 @@ bool compareTrees(MetricTreeNode* node1, MetricTreeNode* node2);
  */
 float trajectoryDistance(const Trajectory& t1, const Trajectory& t2);
 
-/**
- * @brief Split range into equal parts for parallel processing
- * 
- * Utility template function that divides a range [start, end) into
- * approximately equal chunks for parallel processing.
- * 
- * @param start Beginning of range (inclusive)
- * @param end End of range (exclusive)
- * @param num_parts Number of parts to create
- * @return Vector of (start, end) pairs for each chunk
- */
-template<typename T>
-std::vector<std::pair<T, T>> split(T start, T end, int num_parts);
-
 #endif // METRIC_H

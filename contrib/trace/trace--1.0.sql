@@ -100,7 +100,7 @@ CREATE TABLE IF NOT EXISTS trajectory_table (
 CREATE OR REPLACE FUNCTION trace_load_data(
     source_directory TEXT,
     max_file_num INTEGER DEFAULT 200,
-    sample_ratio REAL DEFAULT 0.1
+    sample_ratio REAL DEFAULT 1.0
 ) 
 RETURNS load_result
 AS 'MODULE_PATHNAME', 'trace_load_data'

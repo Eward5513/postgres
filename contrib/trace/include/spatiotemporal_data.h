@@ -470,12 +470,12 @@ std::istream& operator>>(std::istream& is, SpatialBounds& bounds);
 struct Bounds {
     SpatioTemporalData min;   ///< Minimum corner (including time)
     SpatioTemporalData max;   ///< Maximum corner (including time)
-    bool flag;                ///< Internal state flag
+    bool first_flag;                ///< Internal state flag
 
     // Constructors
-    Bounds() : min(SpatioTemporalData()), max(SpatioTemporalData()), flag(true) {}
-    Bounds(const SpatioTemporalData& minimum, const SpatioTemporalData& maximum) : min(minimum), max(maximum), flag(false) {}
-    Bounds(SpatioTemporalData& p) : min(p), max(p) {}
+    Bounds() : min(SpatioTemporalData()), max(SpatioTemporalData()), first_flag(true) {}
+    Bounds(const SpatioTemporalData& minimum, const SpatioTemporalData& maximum) : min(minimum), max(maximum), first_flag(false) {}
+    Bounds(SpatioTemporalData& p) : min(p), max(p), first_flag(false) {}
 
     /**
      * @brief Validate spatiotemporal bounds
@@ -647,8 +647,8 @@ struct Bounds {
     static Bounds limit_max();
     void expand(double factor);
     Bounds getChildBounds(int index, const SpatioTemporalData& center) const;
-    void update(const SpatioTemporalData& point, bool first_flag = false);
-    void update(const void* json_data);
+    void update(const SpatioTemporalData& point);
+    // void update(const void* json_data);  // Unused function - commented out
     bool contains2(const float x, const float y, const float z, const Bounds& maximum) const;
     void print() const;
     

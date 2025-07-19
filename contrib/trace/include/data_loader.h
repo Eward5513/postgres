@@ -9,15 +9,28 @@
 #include <fstream>
 #include <filesystem>
 #include "utils.h"
+#include "spatiotemporal_data.h"
 
 // Add using declarations for commonly used types
 using std::vector;
 namespace fs = std::filesystem;
 
-// Forward declarations
-class Bounds;
-struct SpatioTemporalData;
 class OctreeNode;
+
+/**
+ * @brief Structure to hold processing results from calculate_bound_and_sampleing
+ * 
+ * This structure separates data processing from database operations to enable
+ * thread-safe parallel processing with serial database writes.
+ */
+struct SampleResult {
+    Bounds bounds;                                    // Spatial bounds of the processed data
+    std::vector<std::vector<int32_t>> connections;   // Mesh face connections (for OBJ files)
+    int32_t mesh_id;                                 // Mesh identifier for database writing
+    
+    SampleResult() : mesh_id(-1) {}              // Default constructor
+    SampleResult(const Bounds& b, int32_t id) : bounds(b), mesh_id(id) {}  // Constructor for non-mesh data
+};
 
 class DataLoader{
     public:
@@ -30,7 +43,7 @@ class DataLoader{
     void load_data_source_files();
     void build_index();
     void para_bound_and_sample();
-    Bounds calculate_bound_and_sampleing(const std::string& filename, int32_t fid, int16_t user_id);
+    SampleResult calculate_bound_and_sampleing(const std::string& filename, int32_t fid, int16_t user_id);
     void para_sort_sample_file(const Bounds& bounds);
     void sort_sample_file(int out_file_id, const std::string& filename, const Bounds& bounds, std::vector<uint32_t>& sampleCells);
     void write_sample_to_file(std::unordered_map<int64_t, std::vector<struct SpatioTemporalData>>& cellSamplePoint, int file_id);
