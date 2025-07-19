@@ -772,6 +772,32 @@ public:
     std::vector<SpatioTemporalData> points;       ///< Point collection
 };
 
+/**
+ * @brief Interleave bits of 3D coordinates for Z-order curve indexing
+ * 
+ * Performs bit interleaving (Morton encoding) to convert 3D spatial coordinates
+ * into a single 1D index that preserves spatial locality. This is essential
+ * for spatial data structures like octrees and efficient spatial queries.
+ * 
+ * The algorithm interleaves bits in the pattern: z2,y2,x2,z1,y1,x1,z0,y0,x0
+ * where subscripts represent bit positions from LSB to MSB.
+ * 
+ * @param x X-coordinate (spatial dimension)
+ * @param y Y-coordinate (spatial dimension)
+ * @param z Z-coordinate (spatial dimension)
+ * @param level Number of bits to process from each coordinate
+ * @return uint64_t Morton-encoded index preserving spatial locality
+ * 
+ * @note Level parameter determines precision: level=10 gives 30-bit index
+ * @note Essential for octree construction and spatial partitioning
+ * @note Thread-safe as it performs only arithmetic operations
+ * 
+ * @example
+ * uint64_t morton = interleaveBits(5, 3, 7, 4);  // 4-bit precision
+ * // Converts (x=5, y=3, z=7) to single index for spatial lookup
+ */
+ uint64_t interleaveBits(uint64_t x, uint64_t y, uint64_t z, uint64_t level);
+
 // ============================================================================
 // Utility Functions - Indexing and Distance Calculations
 // ============================================================================

@@ -8,6 +8,7 @@
 #include <mutex>
 #include <fstream>
 #include <filesystem>
+#include <thread>
 #include "utils.h"
 #include "spatiotemporal_data.h"
 
@@ -45,10 +46,10 @@ class DataLoader{
     void para_bound_and_sample();
     SampleResult calculate_bound_and_sampleing(const std::string& filename, int32_t fid, int16_t user_id);
     void para_sort_sample_file(const Bounds& bounds);
-    void sort_sample_file(int out_file_id, const std::string& filename, const Bounds& bounds, std::vector<uint32_t>& sampleCells);
+    void sort_sample_file(const std::string& filename, const Bounds& bounds, std::vector<uint32_t>& sampleCells);
     void write_sample_to_file(std::unordered_map<int64_t, std::vector<struct SpatioTemporalData>>& cellSamplePoint, int file_id);
     void merge_sample_data();
-    uint64_t Sequential_domerge(uint64_t cur_iter_id, bool sample_or_original);
+    uint64_t para_domerge(uint64_t cur_iter_id, bool sample_or_original);
     uint64_t domerge(uint64_t cur_file_id, uint64_t cur_iter, uint64_t cur_file_num, const std::string& prefix);
     
     // Indexing and tree construction functions
@@ -74,16 +75,16 @@ class DataLoader{
     std::atomic<std::uint64_t> sample_sort_count{0};
     std::atomic<std::int64_t> original_sort_count{0};
     std::atomic<std::uint64_t> sample_sorted_file_count{0};
-    std::mutex file_id_mutex;
     std::mutex count_in_cell_mutex;
+    
+    // Thread pool for unified parallel operations
+    ThreadPoolWrapper thread_pool;
 };
 class BuildChunk
 {
 public:
-ThreadPoolWrapper do_indexing_thread_pool;
-    BuildChunk(int thread_num):do_indexing_thread_pool(thread_num){
-        
-    }
+    BuildChunk(int thread_num):do_indexing_thread_pool(thread_num){}
+    ThreadPoolWrapper do_indexing_thread_pool;
     std::int64_t sample_all_size;
     std::int64_t original_all_size;
     std::ifstream sample_file;
@@ -96,16 +97,16 @@ ThreadPoolWrapper do_indexing_thread_pool;
     int node_count = 0;
     long long split_sample_count = 0;
     long long split_original_count = 0;
-    void load_sample_size();
+    void build_octree_hierarchy();
     // const static size_t buffer_size = 1024;
     // std::vector<SpatioTemporalData> buffer;
     OctreeNode *build_chunk_node_sample(Bounds bounds, uint64_t level, uint64_t x, uint64_t y, uint64_t z);
     void split_original_data(Bounds bounds, uint64_t level, uint64_t x, uint64_t y, uint64_t z);
-    void load_original_and_sample_size();
+    // void load_original_and_sample_size();
 
 private:
     // Private member functions for spatial indexing
-    void doIndexing(Bounds bound, int chunk_id, std::vector<SpatioTemporalData> data, int octree_max_level, int max_point_per_leaf, int leaf_num);
+    void build_chunk_spatial_index(Bounds bound, int chunk_id, std::vector<SpatioTemporalData> data, int octree_max_level, int max_point_per_leaf, int leaf_num);
     void para_createTreeWithLeafNode(int chunk_id, const std::vector<struct SpatioTemporalData>& dataPoints, const std::vector<OctreeNode*>& leafVector);
     void newcreateTreeWithLeafNode(const OctreeNode* node, const std::vector<struct SpatioTemporalData>& dataPoints, int chunk_id);
 };

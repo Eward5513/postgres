@@ -7,17 +7,11 @@
 #include <mutex>
 #include <unordered_map>
 
-inline int max_concurrent_tasks_for_read_bound_task = 80;
-inline int max_concurrent_tasks_for_count_task = 80;
-inline int max_concurrent_task_across_chunk = 40;
-inline int max_concurrent_task_inside_chunk = 4;
-inline int thread_pool_size = 32;
+inline int concurrent_task_num = std::thread::hardware_concurrency()*2;
 
-// inline int tran_data_to_db_thread_pool_size = 25;
-
-inline int chunk_max_level = 6;
-inline int max_point_per_chunk = 100000;
-inline int octree_max_level = 12;
+constexpr int chunk_max_level = 5;
+constexpr int max_point_per_chunk = 100;
+constexpr int octree_max_level = 12;
 
 inline std::string data_dir = "/home/zyl/zhangteng/TRACE_buffer/data_buffer";
 

@@ -63,47 +63,6 @@ namespace fs = std::filesystem;
 //            : filePath;
 // }
 
-/**
- * @brief Interleave bits of 3D coordinates for Z-order curve indexing
- * 
- * Implementation performs Morton encoding by interleaving the bits of three
- * spatial coordinates to create a single index that preserves spatial locality.
- * This is fundamental for octree construction and spatial data structures.
- * 
- * Algorithm:
- * 1. For each bit level (0 to level-1):
- *    - Extract least significant bit from each coordinate
- *    - Place x bit at position (3*i), y bit at (3*i+1), z bit at (3*i+2)
- *    - Right-shift each coordinate by 1 bit
- * 2. OR all positioned bits together to form final index
- * 
- * Bit Pattern: ...z2,y2,x2,z1,y1,x1,z0,y0,x0
- * 
- * @param x X-coordinate value
- * @param y Y-coordinate value  
- * @param z Z-coordinate value
- * @param level Number of bits to process from each coordinate
- * @return uint64_t Morton-encoded spatial index
- * 
- * Time Complexity: O(level)
- * Space Complexity: O(1)
- * 
- * @note Essential for spatial indexing and octree operations
- * @note Level determines precision: level=10 gives 30-bit total index
- */
-uint64_t interleaveBits(uint64_t x, uint64_t y, uint64_t z, uint64_t level) {
-    uint64_t result = 0;
-    for (uint64_t i = 0; i < level; i++) {
-        result |= ((x & 1) << (3 * i)) |
-                 ((y & 1) << (3 * i + 1)) |
-                 ((z & 1) << (3 * i + 2));
-        x >>= 1;
-        y >>= 1;
-        z >>= 1;
-    }
-    return result;
-}
-
 // ============================================================================
 // ENCODING UTILITIES
 // ============================================================================

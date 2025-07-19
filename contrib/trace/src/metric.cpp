@@ -207,7 +207,7 @@ MetricTree::MetricTree() : root(nullptr), id_count(0), thread_pool_wrapper(100) 
  * 
  * @param root Pointer to the root node of an existing tree structure
  */
-MetricTree::MetricTree(MetricTreeNode* root) : root(root), id_count(0), thread_pool_wrapper(thread_pool_size) {
+MetricTree::MetricTree(MetricTreeNode* root) : root(root), id_count(0), thread_pool_wrapper(concurrent_task_num) {
 }
 
 /**

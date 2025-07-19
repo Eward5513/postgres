@@ -49,7 +49,8 @@ namespace fs = filesystem;
  *       Actual data loading begins when load_data() is called.
  */
 DataLoader::DataLoader(const string& directory, int max_file_num, float sample_ratio)
-    : directory(directory), max_file_num(max_file_num), sample_ratio(sample_ratio)
+    : directory(directory), max_file_num(max_file_num), sample_ratio(sample_ratio),
+      thread_pool(std::thread::hardware_concurrency() * 2)
 {
 }
 
@@ -130,12 +131,12 @@ void DataLoader::load_data_source_files()
     // int mesh_count = 0;
     // int pointcloud_count = 0;
     // int trajectory_count = 0;
-    vector<string> filenames;
+    vector<string> source_filenames;
     for (const auto &entry : fs::directory_iterator(this->directory))
     {
         const auto &path = entry.path();
         auto filename = path.filename().string();
-        filenames.push_back(this->directory + "/" + path.filename().string());
+        source_filenames.push_back(this->directory + "/" + path.filename().string());
         // if ((trajectory_count < 100 && filename.substr(filename.length() - 3) == "csv") ||
         // (mesh_count < 100 && filename.substr(filename.length() - 3) == "obj") ||
         // (pointcloud_count < 100 && filename.substr(filename.length() - 3) == "ply")){
@@ -151,16 +152,16 @@ void DataLoader::load_data_source_files()
         //     filenames.push_back(sourceDir + "/" + filename);
         // }
     }
-    // sort(filenames.begin(),filenames.end());
+    // sort(source_filenames.begin(),source_filenames.end());
     // mt19937 g(42);
-    // shuffle(filenames.begin(), filenames.end(), g);
+    // shuffle(source_filenames.begin(), source_filenames.end(), g);
     // elog(INFO, "sorting files");
-    FileSorter::sortFiles(filenames);
+    FileSorter::sortFiles(source_filenames);
     elog(INFO, "sorted files");
-    if(filenames.size() > this->max_file_num){
-        filenames.resize(this->max_file_num);
+    if(source_filenames.size() > this->max_file_num){
+        source_filenames.resize(this->max_file_num);
     }
-    this->filenames = filenames;
+    this->filenames = source_filenames;
 }
 
 /**
@@ -251,29 +252,29 @@ void DataLoader::build_index()
     tc.tick();
     elog(INFO, "build chunk");
     OctreeNode *root = this->building_octree_bottom_up_top_down(global_bound);// build chunk
-    std::vector<DBOctreeNode> dbNodes = convertOctreeToDB(root);
-    octreeNodeManager.writeOctreeNodesToDatabase(-1, dbNodes);
-    // if(delete_files)
-    // std::remove((data_dir + "/sample_data/all_sampled_data.bin").c_str());
-    this->build_time["doChunking_time->chunk_constrution_time"] = tc.second();
-    if (0)
-    { // validation
-        elog(INFO, "validation");
-        dbNodes = octreeNodeManager.loadOctreeNodesFromDatabase(-1);
-        elog(INFO, "dbNodes: %zu", dbNodes.size());
-        if (validateConversion(root, dbNodes, 0))
-        {
-            elog(INFO, "Validation passed: The structures are consistent.");
-        }
-        else
-        {
-            elog(ERROR, "Validation failed: The structures are not consistent.");
-        }
-    }
-    elog(INFO, "create chunk time: %f seconds", tc.second());
-    delete root;
+    // std::vector<DBOctreeNode> dbNodes = convertOctreeToDB(root);
+    // octreeNodeManager.writeOctreeNodesToDatabase(-1, dbNodes);
+    // // if(delete_files)
+    // // std::remove((data_dir + "/sample_data/all_sampled_data.bin").c_str());
+    // this->build_time["doChunking_time->chunk_constrution_time"] = tc.second();
+    // if (0)
+    // { // validation
+    //     elog(INFO, "validation");
+    //     dbNodes = octreeNodeManager.loadOctreeNodesFromDatabase(-1);
+    //     elog(INFO, "dbNodes: %zu", dbNodes.size());
+    //     if (validateConversion(root, dbNodes, 0))
+    //     {
+    //         elog(INFO, "Validation passed: The structures are consistent.");
+    //     }
+    //     else
+    //     {
+    //         elog(ERROR, "Validation failed: The structures are not consistent.");
+    //     }
+    // }
+    // elog(INFO, "create chunk time: %f seconds", tc.second());
+    // delete root;
 
-    split_data_to_db1(dbNodes);
+    // split_data_to_db1(dbNodes);
 }
 
 /**
@@ -304,7 +305,6 @@ void DataLoader::para_bound_and_sample(){
     clear1.join();
     clear2.join();
     elog(INFO, "The number of files: %zu", this->filenames.size());
-    boost::asio::thread_pool pool(max_concurrent_tasks_for_read_bound_task);
     
     // Pre-allocate containers for parallel processing results
     std::vector<SampleResult> processing_results(this->filenames.size());
@@ -319,7 +319,7 @@ void DataLoader::para_bound_and_sample(){
     // Parallel processing: each thread processes a different file
     for (std::uint32_t i = 0; i < this->filenames.size(); ++i)
     {
-        boost::asio::post(pool, [this, &loaded_json, &finished_file_counting, i, &processing_results](){
+        thread_pool.post_task([this, &loaded_json, &finished_file_counting, i, &processing_results](){
         TimerClock tc;
         auto file_name = this->filenames[i];
         // Each thread writes to its own index - no data races
@@ -337,7 +337,7 @@ void DataLoader::para_bound_and_sample(){
         // }
         });
     }
-    pool.join();
+    thread_pool.wait_for_all_tasks();
     
     // Serial processing: aggregate bounds and write to database
     elog(INFO, "All threads completed. Starting serial database writes...");
@@ -468,12 +468,12 @@ SampleResult DataLoader::calculate_bound_and_sampleing(const string &filename, f
         if(generator.generate() < this->sample_ratio){
             sample_buffer.push_back(point);
         }
-        // if (sample_buffer.size() >= (32 * 0.25 * 1e6/max_concurrent_tasks_for_count_task))
+        // if (sample_buffer.size() >= (32 * 0.25 * 1e6/concurrent_task_num))
         // {
         //     sample_outfile.write(reinterpret_cast<const char *>(sample_buffer.data()), sizeof(SpatioTemporalData) * sample_buffer.size());
         //     sample_buffer.clear();
         // }
-        // if (buffer.size() >= (32 * 0.25 * 1e6/max_concurrent_tasks_for_count_task))
+        // if (buffer.size() >= (32 * 0.25 * 1e6/concurrent_task_num))
         // {
         //     outfile.write(reinterpret_cast<const char *>(buffer.data()), sizeof(SpatioTemporalData) * buffer.size());
         //     this->bounded_data_size += buffer.size();
@@ -661,23 +661,22 @@ SampleResult DataLoader::calculate_bound_and_sampleing(const string &filename, f
  * - Processes data in chunks to avoid memory overflow
  * - Thread-safe operations with mutex protection
  * 
- * @param out_file_id Output file identifier for sorted data
  * @param filename Input sample file path
  * @param bounds Global spatial bounds for index calculation
- * @param sampleCells Reference to cell count array for statistics
+ * @param countCells Reference to cell count array for statistics
  * 
  * @note Buffer size is dynamically adjusted based on concurrent tasks
- * @note Uses thread-safe operations for file ID generation and cell counting
+ * @note Uses atomic counter for thread-safe output file ID generation
  * @note Implements chunked reading to handle large files efficiently
  */
-void DataLoader::sort_sample_file(int out_file_id, const string &filename, const Bounds &bounds, vector<uint32_t> &sampleCells)
+void DataLoader::sort_sample_file(const string &filename, const Bounds &bounds, vector<uint32_t> &countCells)
 {
     auto spatial_bound = bounds.to_spatial_bound();
     std::ifstream infile(filename, std::ios::binary);
     if (!infile.is_open()) {
         throw std::runtime_error("Open file failed!");
     }
-    std::vector<SpatioTemporalData> buffer(4 * 64 * 1024 * 32/max_concurrent_tasks_for_count_task);
+    std::vector<SpatioTemporalData> buffer(4 * 64 * 1024 * 32/concurrent_task_num);
 
     while (infile) {
         std::unordered_map<std::int64_t, std::vector<SpatioTemporalData>> sorted_sample_data;
@@ -688,18 +687,14 @@ void DataLoader::sort_sample_file(int out_file_id, const string &filename, const
         for (size_t i = 0; i < num_elements_read; ++i) {
             auto &point = buffer[i];
             int64_t index = indexOfPoint(point.x, point.y, point.z, spatial_bound, chunk_max_level);
-            sorted_sample_data[index].emplace_back(point);
+            sorted_sample_data[index].emplace_back(std::move(point));
         }
 
-        std::int64_t sample_file_id = 0;
-        {
-            lock_guard<mutex> lock(this->file_id_mutex);
-            sample_file_id = this->sample_sorted_file_count++;
-        }
+        std::int64_t sample_file_id = this->sample_sorted_file_count++;
         {
             lock_guard<mutex> lock(this->count_in_cell_mutex);
             for(auto &i:sorted_sample_data){
-                sampleCells[i.first] += i.second.size();
+                countCells[i.first] += i.second.size();
             }
         }
         this->write_sample_to_file(sorted_sample_data, sample_file_id);
@@ -762,7 +757,7 @@ void DataLoader::write_sample_to_file(std::unordered_map<int64_t, vector<SpatioT
         fileWrite.write(reinterpret_cast<const char *>(&count_in_cell), sizeof(count_in_cell));
         fileWrite.write(reinterpret_cast<const char *>(samplePointList.data()), count_in_cell * sizeof(SpatioTemporalData));
     }
-    // 使用线程安全的输出函数
+
     std::string log_message = "INFO: " + file_name + " " + std::to_string(tmpcount);
     logger.log(log_message);
     fileWrite.close();
@@ -799,27 +794,28 @@ void DataLoader::para_sort_sample_file(const Bounds &bounds)
 {
     std::string sample_dir = data_dir+"/sample_data";
     clear_folder(sample_dir);
-    std::vector<std::string> filenames;
+    std::vector<std::string> sample_filenames;
     for (const auto &entry : fs::directory_iterator(data_dir + "/temp_bin_sample_file"))
     {
         const auto &path = entry.path();
-        filenames.push_back(data_dir + "/temp_bin_sample_file/" + path.filename().string());
+        sample_filenames.push_back(data_dir + "/temp_bin_sample_file/" + path.filename().string());
     }
     std::uint64_t sampleCellNums = (std::int64_t)1 << (std::int64_t)chunk_max_level * 3;
     auto sampleCells = std::vector<uint32_t>(sampleCellNums, 0);
-    int file_id = 0;
-    for (const auto &filename : filenames)
+    for (const auto &filename : sample_filenames)
     {
+        thread_pool.post_task([=, &bounds, &sampleCells](){
         TimerClock tc;
-        this->sort_sample_file(file_id, filename, bounds, sampleCells); 
+        this->sort_sample_file(filename, bounds, sampleCells);
         // Log progress
         std::string log_message = "INFO: sort sample: " + filename + 
                                  " time: " + std::to_string(tc.second()) + "s";
-        elog(INFO, "%s", log_message.c_str());
+        logger.log(log_message);
         // if(delete_files)
         // std::remove(filename.c_str());
-        ++file_id;
+        });
     }
+    thread_pool.wait_for_all_tasks();
     std::ofstream sampleWrite(sample_dir + "/sampleCellNums.bin", std::ios::binary | std::ios::app);
     sampleWrite.write(reinterpret_cast<const char *>(sampleCells.data()), sampleCellNums * sizeof(std::uint32_t));
     sampleWrite.close();
@@ -860,7 +856,7 @@ void DataLoader::merge_sample_data(){
     std::uint64_t cur_iter_id = 0;
     while (1)
     {
-        auto cur_file_num = this->Sequential_domerge(cur_iter_id, true);
+        auto cur_file_num = this->para_domerge(cur_iter_id, true);
         cur_file_num = (cur_file_num + 1) >> 1;
         cur_iter_id++;
         if (cur_file_num <= 1)
@@ -897,6 +893,8 @@ void DataLoader::merge_sample_data(){
 
     uint64_t validation_sample_cell_id = 0;
     uint64_t validation_sample_cell_count = 0;
+    const size_t buffer_size = 1024;
+    std::vector<SpatioTemporalData> buffer(buffer_size);
     while (cur_file.peek() != EOF && !cur_file.eof())
     {
         cur_file.read(reinterpret_cast<char *>(&cur_index_id), sizeof(cur_index_id));
@@ -908,13 +906,15 @@ void DataLoader::merge_sample_data(){
         }
         if (cell_index != validation_sample_cell_count)
         {
-            elog(WARNING, "sample validation failed: %lu:%lu", validation_sample_cell_count, cell_index);
+            elog(ERROR, "sample validation failed: %lu:%lu", validation_sample_cell_count, cell_index);
         }
-        for (int i = 0; i < cur_index_number; i++)
+        size_t points_read = 0;
+        while (points_read < cur_index_number)
         {
-            SpatioTemporalData point;
-            cur_file.read(reinterpret_cast<char *>(&point), sizeof(point));
-            new_file.write(reinterpret_cast<char *>(&point), sizeof(point));
+            size_t points_to_read = std::min(buffer_size, static_cast<size_t>(cur_index_number - points_read));
+            cur_file.read(reinterpret_cast<char *>(buffer.data()), sizeof(SpatioTemporalData) * points_to_read);
+            new_file.write(reinterpret_cast<char *>(buffer.data()), sizeof(SpatioTemporalData) * points_to_read);
+            points_read += points_to_read;
         }
     }
     elog(INFO, "merged sample data size: %lu", cell_index);
@@ -941,15 +941,15 @@ void DataLoader::merge_sample_data(){
  * @return OctreeNode* Pointer to the root node of the constructed octree
  * 
  * @note Uses external merge-sort approach for large datasets
- * @note Thread pool size controlled by max_concurrent_task_across_chunk
+ * @note Thread pool size controlled by concurrent_task_num
  * @note Sample data is used to guide spatial partitioning decisions
  * @note Cleanup of temporary data directories is performed automatically
  */
 OctreeNode* DataLoader::building_octree_bottom_up_top_down(const Bounds& bounds)
 {
     elog(INFO, "DataLoader::building_octree_bottom_up_top_down");
-    BuildChunk build_util(max_concurrent_task_across_chunk);
-    build_util.load_sample_size();
+    BuildChunk build_util(concurrent_task_num);
+    build_util.build_octree_hierarchy();
     std::int64_t count_sample = 0;
     for (auto &i : build_util.sample_cell_num_in_diff_level.back())
     {
@@ -957,7 +957,7 @@ OctreeNode* DataLoader::building_octree_bottom_up_top_down(const Bounds& bounds)
     }
     logger.log("INFO: prepare: " + std::to_string(count_sample));
     logger.log("INFO: build_util.sample_cell_num_in_diff_level: " + std::to_string(build_util.sample_cell_num_in_diff_level.size()));
-    logger.log("INFO: build_util.cell_num_in_diff_level: " + std::to_string(build_util.cell_num_in_diff_level.size()));
+    // logger.log("INFO: build_util.cell_num_in_diff_level: " + std::to_string(build_util.cell_num_in_diff_level.size()));
 
     clear_folder(data_dir + "/chunk_data");
     auto root = build_util.build_chunk_node_sample(bounds, 0, 0, 0, 0);//build chunk
@@ -995,32 +995,6 @@ OctreeNode* DataLoader::building_octree_bottom_up_top_down(const Bounds& bounds)
  * @note File naming follows pattern: {iteration}_{file_id}.bin
  * @note Output files go to next iteration: {iteration+1}_{file_id/2}.bin
  * @note Uses 1KB buffer for efficient memory usage
- */
-/**
- * @brief Merge two sorted sample files into a single output file
- * 
- * This function implements a two-way merge operation for spatiotemporal data files.
- * It reads two sorted binary files, merges them based on spatial cell IDs, and 
- * writes the result to a new file. This is a core component of the external 
- * sorting algorithm used for handling large datasets.
- * 
- * Algorithm details:
- * - Reads headers containing cell ID and point count from both input files
- * - Performs merge based on spatial cell ordering (Z-order curve)
- * - For matching cell IDs, combines point counts and concatenates data
- * - Uses buffered I/O (1KB buffer) for efficient memory usage
- * - Handles edge cases like single file processing
- * 
- * @param cur_file_id Current file identifier in the merge sequence
- * @param cur_iter Current iteration level in the merge tree
- * @param cur_file_num Total number of files in current iteration
- * @param prefix Directory prefix for file organization (e.g., "sample_data")
- * @return Total number of spatiotemporal points processed
- * 
- * @note File naming convention: {iteration}_{file_id}.bin
- * @note Output files are written to next iteration: {iteration+1}_{file_id/2}.bin
- * @note Single remaining files are renamed rather than copied for efficiency
- * @note Thread-safe logging used for progress tracking
  */
 uint64_t DataLoader::domerge(uint64_t cur_file_id, uint64_t cur_iter, uint64_t cur_file_num, const std::string& prefix)
 {
@@ -1068,18 +1042,16 @@ uint64_t DataLoader::domerge(uint64_t cur_file_id, uint64_t cur_iter, uint64_t c
                 break;
             }
         }
-        if (to_print)
-        {
-            // 使用线程安全的输出函数
-            std::string log_message = "INFO: " + std::to_string(all_number) + 
-                                     " cur_file_id:" + std::to_string(cur_file_id) + 
-                                     " cur_iter:" + std::to_string(cur_iter) + 
-                                     " cur_file_num:" + std::to_string(cur_file_num) + 
-                                     " next:" + next_file_name + 
-                                     " cur:" + cur_file_name + 
-                                     " new:" + new_file_name;
-            logger.log(log_message);
-        }
+
+        std::string log_message = "INFO: " + std::to_string(all_number) + 
+                                    " cur_file_id:" + std::to_string(cur_file_id) + 
+                                    " cur_iter:" + std::to_string(cur_iter) + 
+                                    " cur_file_num:" + std::to_string(cur_file_num) + 
+                                    " next:" + next_file_name + 
+                                    " cur:" + cur_file_name + 
+                                    " new:" + new_file_name;
+        logger.log(log_message);
+
         std::rename(cur_file_name.c_str(), new_file_name.c_str());
         return all_number;
     }
@@ -1224,18 +1196,16 @@ uint64_t DataLoader::domerge(uint64_t cur_file_id, uint64_t cur_iter, uint64_t c
     }
     if (file2_end && file1_end)
     {
-        if (to_print)
-        {
-            // Log merge progress
-            std::string log_message = "INFO: " + std::to_string(all_number) + 
-                                     " cur_file_id:" + std::to_string(cur_file_id) + 
-                                     " cur_iter:" + std::to_string(cur_iter) + 
-                                     " cur_file_num:" + std::to_string(cur_file_num) + 
-                                     " next:" + next_file_name + 
-                                     " cur:" + cur_file_name + 
-                                     " new:" + new_file_name;
-            elog(INFO, "%s", log_message.c_str());
-        }
+
+        std::string log_message = "INFO: " + std::to_string(all_number) + 
+                                    " cur_file_id:" + std::to_string(cur_file_id) + 
+                                    " cur_iter:" + std::to_string(cur_iter) + 
+                                    " cur_file_num:" + std::to_string(cur_file_num) + 
+                                    " next:" + next_file_name + 
+                                    " cur:" + cur_file_name + 
+                                    " new:" + new_file_name;
+        logger.log(log_message);
+        
         return all_number;
     }
     if (file2_end)
@@ -1286,18 +1256,15 @@ uint64_t DataLoader::domerge(uint64_t cur_file_id, uint64_t cur_iter, uint64_t c
             }
         }
     }
-    if (to_print)
-    {
-        // Log merge progress
-        std::string log_message = "INFO: " + std::to_string(all_number) + 
-                                 " cur_file_id:" + std::to_string(cur_file_id) + 
-                                 " cur_iter:" + std::to_string(cur_iter) + 
-                                 " cur_file_num:" + std::to_string(cur_file_num) + 
-                                 " next:" + next_file_name + 
-                                 " cur:" + cur_file_name + 
-                                 " new:" + new_file_name;
-        elog(INFO, "%s", log_message.c_str());
-    }
+    std::string log_message = "INFO: " + std::to_string(all_number) + 
+                                " cur_file_id:" + std::to_string(cur_file_id) + 
+                                " cur_iter:" + std::to_string(cur_iter) + 
+                                " cur_file_num:" + std::to_string(cur_file_num) + 
+                                " next:" + next_file_name + 
+                                " cur:" + cur_file_name + 
+                                " new:" + new_file_name;
+    logger.log(log_message);
+    
     return all_number;
 }
 
@@ -1323,9 +1290,9 @@ uint64_t DataLoader::domerge(uint64_t cur_file_id, uint64_t cur_iter, uint64_t c
  * @note Sequential processing avoids database threading conflicts
  * @note Works with both sample and original data directories
  */
-uint64_t DataLoader::Sequential_domerge(uint64_t cur_iter_id, bool sample_or_original)
+uint64_t DataLoader::para_domerge(uint64_t cur_iter_id, bool sample_or_original)
 {
-    elog(INFO, "Sequential merge iteration: %lu", cur_iter_id);
+    elog(INFO, "parallel merge iteration: %lu", cur_iter_id);
     string prefix;
     if (sample_or_original)
     {
@@ -1339,78 +1306,139 @@ uint64_t DataLoader::Sequential_domerge(uint64_t cur_iter_id, bool sample_or_ori
     std::atomic<uint64_t> merged_count(0);
     for (uint64_t i = 0; i < sample_files.size(); i += 2)
     {
-        merged_count += domerge(i, cur_iter_id, sample_files.size(), prefix);
+        thread_pool.post_task([&, i,cur_iter_id,file_set_size=sample_files.size()]()
+                              { merged_count += domerge(i, cur_iter_id, file_set_size, prefix); });
     }
+    thread_pool.wait_for_all_tasks();
     // sample_files = findFilesWithPrefix("./" + prefix, to_string(cur_iter_id) + "_");
 
     {
-        // Clean up processed files sequentially
-        for(std::int64_t i = 0; i < sample_files.size(); ++i){
-            std::string file_path = data_dir +"/" + prefix + "/" + sample_files[i];
-            std::remove(file_path.c_str()); 
+        auto tasks = split<std::int64_t>(0,sample_files.size(),concurrent_task_num);
+        for (auto task : tasks)
+        {
+            thread_pool.post_task([prefix,task,&sample_files]()
+            {
+                for(std::int64_t i = task.first;i<task.second;++i){
+                    std::string file_path = data_dir +"/" + prefix + "/" + sample_files[i];
+                    std::remove(file_path.c_str()); 
+                }
+            });
         }
+        thread_pool.wait_for_all_tasks();
     }
     elog(INFO, "merged it count: %lu - %lu", cur_iter_id, merged_count.load());
     return sample_files.size();
 }
 
-void BuildChunk::load_sample_size()
+/**
+ * @brief Load and process sample data to build multi-level octree statistics
+ * 
+ * This function performs the following key operations:
+ * 1. Loads sample cell count statistics from binary file
+ * 2. Validates data integrity and file format
+ * 3. Opens sample data file for subsequent processing
+ * 4. Builds hierarchical octree structure with level-wise aggregated statistics
+ * 
+ * The function creates a bottom-up octree hierarchy where each level contains
+ * aggregated statistics from the level below. This is essential for efficient
+ * spatial indexing and query processing.
+ * 
+ * @note This function must be called before any octree construction operations
+ * @note File paths are relative to data_dir/sample_data/
+ * @throws std::runtime_error if file validation fails or data inconsistency detected
+ */
+void BuildChunk::build_octree_hierarchy()
 {
+    // STEP 1: Calculate expected number of sample cells in finest level
+    // For 3D octree: total cells = 2^(chunk_max_level * 3) = 8^chunk_max_level
     uint64_t sampleCellNums = (int64_t)1 << (int64_t)chunk_max_level * 3;
     // uint64_t sampleDimension = (int64_t)1 << (int64_t)chunk_max_level; // unused variable
+    
+    // STEP 2: Load sample cell count statistics from binary file
     {
+        // Open sample cell statistics file in binary mode
         std::ifstream sampleFile(data_dir +"/sample_data/sampleCellNums.bin", std::ios::binary);
+        
+        // Get file size by seeking to end and reading position
         sampleFile.seekg(0, std::ios::end);
         std::streamsize fileSize = sampleFile.tellg();
         sampleFile.seekg(0, std::ios::beg);
+        
+        // Validate file format: size must be multiple of uint32_t
         if (fileSize % sizeof(uint32_t) != 0)
         {
             throw std::runtime_error("Data file size exception");
         }
+        
+        // Calculate number of elements and validate against expected count
         std::size_t numElements = fileSize / sizeof(uint32_t);
         if (numElements != sampleCellNums)
         {
             throw std::runtime_error("Data count exception");
         }
+        
+        // Load all sample cell statistics into memory
         sampleCells.resize(numElements);
         sampleFile.read(reinterpret_cast<char *>(sampleCells.data()), fileSize);
         sampleFile.close();
     }
 
-    node_count = 0;
+    // STEP 3: Initialize counters and open sample data file for processing
+    node_count = 0;  // Reset octree node counter
     long long sample_size = 0;
+    
+    // Open main sample data file and calculate total sample count
     sample_file = std::ifstream(data_dir +"/sample_data/all_sampled_data.bin", std::ios::binary);
     sample_file.seekg(0, std::ios::end);
     std::streamsize fileSize = sample_file.tellg();
     sample_size = fileSize / sizeof(SpatioTemporalData);
-    sample_all_size = sample_size;
+    sample_all_size = sample_size;  // Store for later use
     logger.log("INFO: sample file size: " + std::to_string(sample_size));
-    sample_file.seekg(0, std::ios::beg);
+    sample_file.seekg(0, std::ios::beg);  // Reset to beginning for data reading
 
-    auto copied_sampleCells = sampleCells;
+    // STEP 4: Build multi-level octree hierarchy through bottom-up aggregation
+    auto copied_sampleCells = sampleCells;  // Work with copy to preserve original
+    
+    // Iteratively build hierarchy from finest to coarsest level
     while (copied_sampleCells.size() >= 1)
     {
+        // Store current level's cell statistics
         sample_cell_num_in_diff_level.push_back(copied_sampleCells);
+        
+        // Calculate size for next coarser level (8:1 reduction for 3D octree)
         size_t newSize = copied_sampleCells.size() / 8;
         if (newSize == 0)
         {
-            break;
+            break;  // Reached top level of octree
         }
-        size_t count = 0;
+        
+        // Aggregate statistics for parent level
+        size_t count = 0;  // Total count for validation
         std::vector<__uint32_t> mergedCells(newSize);
+        
+        // For each parent cell, aggregate its 8 children
         for (size_t i = 0; i < newSize; ++i)
         {
             __uint32_t mergedValue = 0;
+            // Sum the 8 consecutive child cells (octree property: 2^3 = 8 children per parent)
             for (size_t j = i * 8; j < (i + 1) * 8; ++j)
             {
                 mergedValue += copied_sampleCells[j];
             }
-            count += mergedValue;
-            mergedCells[i] = mergedValue;
+            count += mergedValue;           // Accumulate for logging
+            mergedCells[i] = mergedValue;   // Store aggregated value
         }
+        
+        // Log level statistics for monitoring and debugging
         logger.log("INFO: level size: " + std::to_string(newSize) + " count: " + std::to_string(count));
+        
+        // Move to next level (avoid copy overhead)
         copied_sampleCells = std::move(mergedCells);
     }
+    
+    // STEP 5: Reverse order for top-down access pattern
+    // Original order: [finest -> coarsest], reversed: [coarsest -> finest]
+    // This allows level-indexed access where level 0 = root, higher levels = finer detail
     std::reverse(sample_cell_num_in_diff_level.begin(), sample_cell_num_in_diff_level.end());
 }
 
@@ -1441,7 +1469,7 @@ void BuildChunk::load_sample_size()
 //                 chunk_original_data_to_db(id, chunk_data);
 //             }
 //         );
-//         do_indexing_thread_pool.wait_for_all_tasks(max_concurrent_task_across_chunk * 2);
+//         do_indexing_thread_pool.wait_for_all_tasks(concurrent_task_num * 2);
 //         std::cout << " leaf info: " << " id:" << id << " level:" << level << " x:" << x << " y:" << y << " z:" << z << " size:" << chunk_original_data_size << std::endl;
 //         return;
 //     }
@@ -1512,7 +1540,7 @@ void BuildChunk::load_sample_size()
  * @note All index data is persisted to database for later query processing
  * @note Memory cleanup handled automatically via RAII and explicit deletion
  */
-void BuildChunk::doIndexing(Bounds bound, int chunk_id, std::vector<SpatioTemporalData> data, int octree_max_level, int max_point_per_leaf, int leaf_num)
+void BuildChunk::build_chunk_spatial_index(Bounds bound, int chunk_id, std::vector<SpatioTemporalData> data, int octree_max_level, int max_point_per_leaf, int leaf_num)
 {
     TimerClock tc;
     OctreeBuilder octree_builder(max_point_per_leaf);
@@ -1530,7 +1558,6 @@ void BuildChunk::doIndexing(Bounds bound, int chunk_id, std::vector<SpatioTempor
         BinaryKVStorage bs(data_dir+"/kdtree");
         // kdTreeNodeManager.writeKdTreeNodesToDatabase(chunk_id, dbNodes[0].id, tree);
         bs.write("kd_"+std::to_string(chunk_id)+"_"+std::to_string(dbNodes[0].id),tree);
-        // 建立这里的原因是防止采样数据没有采样到，但是原始数据里面又这样的数据而报错
         return;
     }
     index_loading_num += octree_builder.dataPoints.size();
@@ -1549,71 +1576,143 @@ void BuildChunk::doIndexing(Bounds bound, int chunk_id, std::vector<SpatioTempor
     delete octree_root;
 }
 
+/**
+ * @brief Recursively build octree chunk nodes using pre-computed sample statistics
+ * 
+ * This function constructs an octree structure for spatial indexing using a top-down
+ * recursive approach. It leverages pre-computed sample statistics from different 
+ * hierarchy levels to efficiently determine node properties and termination conditions.
+ * 
+ * Key Features:
+ * - Uses Morton encoding for efficient spatial indexing
+ * - Implements adaptive subdivision based on data density
+ * - Creates leaf nodes for direct spatial query processing
+ * - Builds hierarchical spatial index for large-scale datasets
+ * 
+ * Algorithm Overview:
+ * 1. Calculate spatial cell ID using Morton encoding
+ * 2. Create octree node with specified bounds and metadata
+ * 3. Determine if current node should be a leaf (based on point count or depth)
+ * 4. For leaf nodes: load data and build detailed spatial index
+ * 5. For internal nodes: recursively subdivide into 8 octants
+ * 
+ * @param bounds Spatial bounding box for this octree node
+ * @param level Current depth level in the octree hierarchy (0 = root)
+ * @param x X-coordinate in the octree grid at current level
+ * @param y Y-coordinate in the octree grid at current level  
+ * @param z Z-coordinate in the octree grid at current level
+ * 
+ * @return Pointer to newly created OctreeNode (caller responsible for memory management)
+ * 
+ * @note Uses pre-computed sample_cell_num_in_diff_level for O(1) point count lookups
+ * @note Leaf nodes trigger detailed spatial indexing via build_chunk_spatial_index()
+ * @note Coordinates (x,y,z) represent grid position, not spatial coordinates
+ * @note Memory is allocated for octree nodes; ensure proper cleanup in caller
+ * 
+ * @warning This function performs file I/O operations on sample_file
+ * @warning Recursive depth is bounded by chunk_max_level to prevent stack overflow
+ */
 OctreeNode *BuildChunk::build_chunk_node_sample(Bounds bounds, uint64_t level, uint64_t x, uint64_t y, uint64_t z)
 {
-    uint64_t cell_id = interleaveBits(x, y, z,chunk_max_level);
+    // STEP 1: Calculate spatial cell identifier using Morton encoding
+    // Morton code preserves spatial locality for efficient range queries
+    uint64_t cell_id = interleaveBits(x, y, z, chunk_max_level);
+    
+    // STEP 2: Create new octree node with spatial and hierarchical metadata
     OctreeNode *node = new OctreeNode(bounds, level);
-    node->id = node_count++;
+    node->id = node_count++;  // Assign unique incremental ID
+    
+    // STEP 3: Retrieve pre-computed point count from hierarchy statistics
+    // O(1) lookup using level-indexed array and Morton-encoded cell ID
     node->pointCount = sample_cell_num_in_diff_level[level][cell_id];
+    
+    // STEP 4: Determine if this should be a leaf node
+    // Termination conditions: (1) Low data density OR (2) Maximum depth reached
     if (node->pointCount <= max_point_per_chunk || level >= chunk_max_level)
     {
+        // LEAF NODE PROCESSING: Build detailed spatial index for direct queries
         node->is_leaf = true;
+        
         {
+            // Load spatiotemporal data for this chunk from sequential file
             std::vector<SpatioTemporalData> chunk_data(node->pointCount);
-            sample_file.read(reinterpret_cast<char *>(chunk_data.data()), node->pointCount * sizeof(SpatioTemporalData));
-            split_sample_count += node->pointCount;
-            // Comment out parallel implementation and use serial instead
+            sample_file.read(reinterpret_cast<char *>(chunk_data.data()), 
+                           node->pointCount * sizeof(SpatioTemporalData));
+            split_sample_count += node->pointCount;  // Track processing progress
+            
+            // Note: Parallel implementation commented out for database consistency
             // do_indexing_thread_pool.post_task(
             //     [chunk_data = std::move(chunk_data),bound=node->bound,chunk_id = node->id](){
-            //         doIndexing(bound,chunk_id,std::move(chunk_data),octree_max_level, max_point_per_leaf,-1);
+            //         build_chunk_spatial_index(bound,chunk_id,std::move(chunk_data),octree_max_level, max_point_per_leaf,-1);
             //     }
             // );
-            // do_indexing_thread_pool.wait_for_all_tasks(max_concurrent_task_across_chunk * 2);
+            // do_indexing_thread_pool.wait_for_all_tasks(concurrent_task_num * 2);
             
-            // Serial implementation
-            this->doIndexing(node->bound, node->id, std::move(chunk_data), octree_max_level, max_point_per_leaf, -1);
+            // SERIAL IMPLEMENTATION: Build detailed KD-tree index for leaf data
+            // This creates fine-grained spatial index within the chunk
+            this->build_chunk_spatial_index(node->bound, node->id, std::move(chunk_data), 
+                           octree_max_level, max_point_per_leaf, -1);
         }
-                elog(INFO, "leaf info: id:%d level:%ld x:%ld y:%ld z:%ld size:%zu",
+        
+        // Log leaf node creation for monitoring and debugging
+        elog(INFO, "leaf info: id:%d level:%ld x:%ld y:%ld z:%ld size:%zu",
              node->id, (long)level, (long)x, (long)y, (long)z, node->pointCount);
         return node;
     }
+    
+    // STEP 5: INTERNAL NODE PROCESSING: Recursively subdivide into 8 octants
+    // Create children for all 8 possible octants in 3D space
     for (int i = 0; i < 8; ++i)
     {
-        int bitx = (i >> 0) & 1;
-        int bity = (i >> 1) & 1;
-        int bitz = (i >> 2) & 1;
+        // Extract individual bit components for 3D octant subdivision
+        int bitx = (i >> 0) & 1;  // X-dimension bit (LSB)
+        int bity = (i >> 1) & 1;  // Y-dimension bit (middle bit)
+        int bitz = (i >> 2) & 1;  // Z-dimension bit (MSB)
+        
+        // Calculate child coordinates by left-shifting parent and adding octant bit
+        // This maintains Morton encoding properties across hierarchy levels
         int new_x = (x << 1) | bitx;
         int new_y = (y << 1) | bity;
         int new_z = (z << 1) | bitz;
+        
+        // SPATIAL SUBDIVISION: Create bounding box for child octant
         auto center = bounds.getCenter();
         Bounds sub_bound = bounds;
+        
+        // X-dimension subdivision
         if (bitx == 0)
         {
-            sub_bound.max.x = center.x;
+            sub_bound.max.x = center.x;  // Left half: [min_x, center_x]
         }
         else
         {
-            sub_bound.min.x = center.x;
+            sub_bound.min.x = center.x;  // Right half: [center_x, max_x]
         }
+        
+        // Y-dimension subdivision  
         if (bity == 0)
         {
-            sub_bound.max.y = center.y;
+            sub_bound.max.y = center.y;  // Lower half: [min_y, center_y]
         }
         else
         {
-            sub_bound.min.y = center.y;
+            sub_bound.min.y = center.y;  // Upper half: [center_y, max_y]
         }
 
+        // Z-dimension subdivision
         if (bitz == 0)
         {
-            sub_bound.max.z = center.z;
+            sub_bound.max.z = center.z;  // Front half: [min_z, center_z]
         }
         else
         {
-            sub_bound.min.z = center.z;
+            sub_bound.min.z = center.z;  // Back half: [center_z, max_z]
         }
+        
+        // RECURSIVE CALL: Build child subtree
         node->children[i] = build_chunk_node_sample(sub_bound, level + 1, new_x, new_y, new_z);
     }
+    
     return node;
 }
 
@@ -1718,123 +1817,123 @@ void DataLoader::split_data(int id,std::vector<DBOctreeNode> &nodes, std::vector
 //     }
 // }
 
-void BuildChunk::load_original_and_sample_size(){
-    uint64_t sampleCellNums = (int64_t)1 << (int64_t)chunk_max_level * 3;
-    // uint64_t sampleDimension = (int64_t)1 << (int64_t)chunk_max_level; // unused variable
-    {
-        sampleCells.resize(sampleCellNums);
-        originalCells.resize(sampleCellNums);
-        std::ifstream originalFile(data_dir +"/sample_data/originalCellNums.bin", std::ios::binary);
-        originalFile.seekg(0, std::ios::end);
-        std::streamsize fileSize = originalFile.tellg();
-        originalFile.seekg(0, std::ios::beg);
-        if (fileSize % sizeof(uint64_t) != 0)
-        {
-            throw std::runtime_error("Data file size exception");
-        }
-        std::size_t numElements = fileSize / sizeof(uint64_t);
-        if (numElements != sampleCellNums)
-        {
-            throw std::runtime_error("Data file size exception");
-        }
-        originalCells.resize(numElements);
-        originalFile.read(reinterpret_cast<char *>(originalCells.data()), fileSize);
-        originalFile.close();
-    }
-    {
-        std::ifstream sampleFile(data_dir +"/sample_data/sampleCellNums.bin", std::ios::binary);
-        sampleFile.seekg(0, std::ios::end);
-        std::streamsize fileSize = sampleFile.tellg();
-        sampleFile.seekg(0, std::ios::beg);
-        if (fileSize % sizeof(uint32_t) != 0)
-        {
-            throw std::runtime_error("Data file size exception");
-        }
-        std::size_t numElements = fileSize / sizeof(uint32_t);
-        if (numElements != sampleCellNums)
-        {
-            throw std::runtime_error("Data file size exception");
-        }
-        sampleCells.resize(numElements);
-        sampleFile.read(reinterpret_cast<char *>(sampleCells.data()), fileSize);
-        sampleFile.close();
-    }
+// void BuildChunk::load_original_and_sample_size(){
+//     uint64_t sampleCellNums = (int64_t)1 << (int64_t)chunk_max_level * 3;
+//     // uint64_t sampleDimension = (int64_t)1 << (int64_t)chunk_max_level; // unused variable
+//     {
+//         sampleCells.resize(sampleCellNums);
+//         originalCells.resize(sampleCellNums);
+//         std::ifstream originalFile(data_dir +"/sample_data/originalCellNums.bin", std::ios::binary);
+//         originalFile.seekg(0, std::ios::end);
+//         std::streamsize fileSize = originalFile.tellg();
+//         originalFile.seekg(0, std::ios::beg);
+//         if (fileSize % sizeof(uint64_t) != 0)
+//         {
+//             throw std::runtime_error("Data file size exception");
+//         }
+//         std::size_t numElements = fileSize / sizeof(uint64_t);
+//         if (numElements != sampleCellNums)
+//         {
+//             throw std::runtime_error("Data file size exception");
+//         }
+//         originalCells.resize(numElements);
+//         originalFile.read(reinterpret_cast<char *>(originalCells.data()), fileSize);
+//         originalFile.close();
+//     }
+//     {
+//         std::ifstream sampleFile(data_dir +"/sample_data/sampleCellNums.bin", std::ios::binary);
+//         sampleFile.seekg(0, std::ios::end);
+//         std::streamsize fileSize = sampleFile.tellg();
+//         sampleFile.seekg(0, std::ios::beg);
+//         if (fileSize % sizeof(uint32_t) != 0)
+//         {
+//             throw std::runtime_error("Data file size exception");
+//         }
+//         std::size_t numElements = fileSize / sizeof(uint32_t);
+//         if (numElements != sampleCellNums)
+//         {
+//             throw std::runtime_error("Data file size exception");
+//         }
+//         sampleCells.resize(numElements);
+//         sampleFile.read(reinterpret_cast<char *>(sampleCells.data()), fileSize);
+//         sampleFile.close();
+//     }
 
-    node_count = 0;
-    long long sample_size = 0;
-    sample_file = std::ifstream(data_dir +"/sample_data/all_sampled_data.bin", std::ios::binary);
-    sample_file.seekg(0, std::ios::end);
-    std::streamsize fileSize = sample_file.tellg();
-    sample_size = fileSize / sizeof(SpatioTemporalData);
-    sample_all_size = sample_size;
-    logger.log("INFO: sample file size: " + std::to_string(sample_size));
-    sample_file.seekg(0, std::ios::beg);
+//     node_count = 0;
+//     long long sample_size = 0;
+//     sample_file = std::ifstream(data_dir +"/sample_data/all_sampled_data.bin", std::ios::binary);
+//     sample_file.seekg(0, std::ios::end);
+//     std::streamsize fileSize = sample_file.tellg();
+//     sample_size = fileSize / sizeof(SpatioTemporalData);
+//     sample_all_size = sample_size;
+//     logger.log("INFO: sample file size: " + std::to_string(sample_size));
+//     sample_file.seekg(0, std::ios::beg);
 
-    original_file = std::ifstream(data_dir +"/original_data/all_data.bin", std::ios::binary);
-    original_file.seekg(0, std::ios::end);
-    fileSize = original_file.tellg();
-    sample_size = fileSize / sizeof(SpatioTemporalData);
-    original_all_size = sample_size;
-    logger.log("INFO: data file size: " + std::to_string(sample_size));
-    original_file.seekg(0, std::ios::beg);
+//     original_file = std::ifstream(data_dir +"/original_data/all_data.bin", std::ios::binary);
+//     original_file.seekg(0, std::ios::end);
+//     fileSize = original_file.tellg();
+//     sample_size = fileSize / sizeof(SpatioTemporalData);
+//     original_all_size = sample_size;
+//     logger.log("INFO: data file size: " + std::to_string(sample_size));
+//     original_file.seekg(0, std::ios::beg);
 
-    auto copied_sampleCells = sampleCells;
-    while (copied_sampleCells.size() >= 1)
-    {
-        sample_cell_num_in_diff_level.push_back(copied_sampleCells);
-        size_t newSize = copied_sampleCells.size() / 8;
-        if (newSize == 0)
-        {
-            break;
-        }
-        size_t count = 0;
-        std::vector<__uint32_t> mergedCells(newSize);
-        for (size_t i = 0; i < newSize; ++i)
-        {
-            __uint32_t mergedValue = 0;
-            for (size_t j = i * 8; j < (i + 1) * 8; ++j)
-            {
-                mergedValue += copied_sampleCells[j];
-            }
-            count += mergedValue;
-            mergedCells[i] = mergedValue;
-        }
-        logger.log("INFO: sample level size: " + std::to_string(newSize) + " count: " + std::to_string(count));
-        copied_sampleCells = std::move(mergedCells);
-    }
-    auto copied_originalCells = originalCells;
-    while (copied_originalCells.size() >= 1)
-    {
-        cell_num_in_diff_level.push_back(copied_originalCells);
-        size_t newSize = copied_originalCells.size() / 8;
-        if (newSize == 0)
-        {
-            break;
-        }
-        size_t count = 0;
-        std::vector<__uint64_t> mergedCells(newSize);
-        for (size_t i = 0; i < newSize; ++i)
-        {
-            __uint32_t mergedValue = 0;
-            for (size_t j = i * 8; j < (i + 1) * 8; ++j)
-            {
-                mergedValue += copied_originalCells[j];
-            }
-            count += mergedValue;
-            mergedCells[i] = mergedValue;
-        }
-        logger.log("INFO: original level size: " + std::to_string(newSize) + " count: " + std::to_string(count));
-        copied_originalCells = std::move(mergedCells);
-    }
+//     auto copied_sampleCells = sampleCells;
+//     while (copied_sampleCells.size() >= 1)
+//     {
+//         sample_cell_num_in_diff_level.push_back(copied_sampleCells);
+//         size_t newSize = copied_sampleCells.size() / 8;
+//         if (newSize == 0)
+//         {
+//             break;
+//         }
+//         size_t count = 0;
+//         std::vector<__uint32_t> mergedCells(newSize);
+//         for (size_t i = 0; i < newSize; ++i)
+//         {
+//             __uint32_t mergedValue = 0;
+//             for (size_t j = i * 8; j < (i + 1) * 8; ++j)
+//             {
+//                 mergedValue += copied_sampleCells[j];
+//             }
+//             count += mergedValue;
+//             mergedCells[i] = mergedValue;
+//         }
+//         logger.log("INFO: sample level size: " + std::to_string(newSize) + " count: " + std::to_string(count));
+//         copied_sampleCells = std::move(mergedCells);
+//     }
+//     auto copied_originalCells = originalCells;
+//     while (copied_originalCells.size() >= 1)
+//     {
+//         cell_num_in_diff_level.push_back(copied_originalCells);
+//         size_t newSize = copied_originalCells.size() / 8;
+//         if (newSize == 0)
+//         {
+//             break;
+//         }
+//         size_t count = 0;
+//         std::vector<__uint64_t> mergedCells(newSize);
+//         for (size_t i = 0; i < newSize; ++i)
+//         {
+//             __uint32_t mergedValue = 0;
+//             for (size_t j = i * 8; j < (i + 1) * 8; ++j)
+//             {
+//                 mergedValue += copied_originalCells[j];
+//             }
+//             count += mergedValue;
+//             mergedCells[i] = mergedValue;
+//         }
+//         logger.log("INFO: original level size: " + std::to_string(newSize) + " count: " + std::to_string(count));
+//         copied_originalCells = std::move(mergedCells);
+//     }
 
-    assert(cell_num_in_diff_level.size() == sample_cell_num_in_diff_level.size());
-    for (int i = 0; i < cell_num_in_diff_level.size(); ++i)
-    {
-        assert(cell_num_in_diff_level[i].size() == sample_cell_num_in_diff_level[i].size());
-    }
-    std::reverse(cell_num_in_diff_level.begin(), cell_num_in_diff_level.end());
-    std::reverse(sample_cell_num_in_diff_level.begin(), sample_cell_num_in_diff_level.end());
-}
+//     assert(cell_num_in_diff_level.size() == sample_cell_num_in_diff_level.size());
+//     for (int i = 0; i < cell_num_in_diff_level.size(); ++i)
+//     {
+//         assert(cell_num_in_diff_level[i].size() == sample_cell_num_in_diff_level[i].size());
+//     }
+//     std::reverse(cell_num_in_diff_level.begin(), cell_num_in_diff_level.end());
+//     std::reverse(sample_cell_num_in_diff_level.begin(), sample_cell_num_in_diff_level.end());
+// }
 
 /**
  * @brief Create KD-tree indexes for octree leaf nodes in parallel
@@ -1855,7 +1954,7 @@ void BuildChunk::load_original_and_sample_size(){
  * @param dataPoints Complete dataset of spatiotemporal points for the chunk
  * @param leafVector Vector of all octree leaf nodes requiring KD-tree indexes
  * 
- * @note Thread pool size controlled by max_concurrent_task_inside_chunk parameter
+ * @note Thread pool size controlled by concurrent_task_num parameter
  * @note Each leaf node is processed by newcreateTreeWithLeafNode function
  * @note Synchronization ensures all KD-trees are built before function returns
  * @note Essential for enabling efficient point-in-region queries
@@ -1864,7 +1963,7 @@ void BuildChunk::para_createTreeWithLeafNode(int chunk_id, const vector<SpatioTe
                                  const vector<OctreeNode *> &leafVector)
 {
     elog(INFO, "BuildChunk::para_createTreeWithLeafNode");
-    boost::asio::thread_pool pool(max_concurrent_task_inside_chunk);
+    boost::asio::thread_pool pool(concurrent_task_num);
     for (int i = 0; i < leafVector.size(); i++)
     {
         OctreeNode *node = leafVector[i];
@@ -1966,7 +2065,7 @@ void DataLoader::sort_original_file_by_octree(const string &filename, OctreePoin
     logger.log("INFO: sort_original_file_by_octree: Processing file " + filename);
     
     std::ifstream infile(filename, std::ios::binary);
-    std::vector<SpatioTemporalData> buffer(4 * 4 * 64 * 1024 * 32/max_concurrent_tasks_for_count_task);
+    std::vector<SpatioTemporalData> buffer(4 * 4 * 64 * 1024 * 32/concurrent_task_num);
     size_t buffer_size = buffer.size();
     size_t points_read;
     while (infile)
@@ -2046,7 +2145,7 @@ void DataLoader::sort_original_file_by_octree(const string &filename, OctreePoin
  * @param query_utils Shared octree query utility for spatial partitioning
  * @param block_size Statistics collection map for performance analysis
  * 
- * @note Thread pool size controlled by max_concurrent_tasks_for_count_task
+ * @note Thread pool size controlled by concurrent_task_num
  * @note Progress reporting includes per-file timing and overall completion status
  * @note Essential step in the data ingestion pipeline before database storage
  * @note File operations only - no PostgreSQL SPI calls, safe for parallel execution
@@ -2054,7 +2153,6 @@ void DataLoader::sort_original_file_by_octree(const string &filename, OctreePoin
 void DataLoader::para_sort_original_file_by_octree(const vector<string> &filenames, OctreePointQuery &query_utils,
     std::unordered_map<int,std::unordered_map<int,std::int64_t>> &block_size)
 {
-    boost::asio::thread_pool pool(max_concurrent_tasks_for_count_task);
     int file_id = 0;
     std::mutex mutex;
     std::atomic<int> processed_files(0);
@@ -2063,21 +2161,21 @@ void DataLoader::para_sort_original_file_by_octree(const vector<string> &filenam
     
     for (const auto &filename : filenames)
     { 
-        boost::asio::post(pool, [this,filename=filename,file_id,&query_utils,&block_size,&mutex,&processed_files,total_files=filenames.size()]()
+        thread_pool.post_task([this,filename=filename,file_id,&query_utils,&block_size,&mutex,&processed_files,total_files=filenames.size()]()
         {
             TimerClock tc;
             this->sort_original_file_by_octree(filename, query_utils,block_size,mutex);
             int current_processed = processed_files++;
             std::string log_message = "INFO: para_sort_original_file_by_octree: Processed file " + filename + 
                                      ", progress: " + std::to_string(current_processed + 1) + "/" + std::to_string(total_files) + 
-                                     ", time: " + std::to_string(tc.second()/max_concurrent_tasks_for_count_task) + " seconds";
+                                     ", time: " + std::to_string(tc.second()/concurrent_task_num) + " seconds";
             logger.log(log_message);
             // if(delete_files)
             // std::remove(filename.c_str()); 
         });
         ++file_id;
     }
-    pool.join();
+    thread_pool.wait_for_all_tasks();
     
     elog(INFO, "para_sort_original_file_by_octree: Completed processing all %zu files", filenames.size());
 }
@@ -2158,12 +2256,12 @@ void DataLoader::split_data_to_db1(std::vector<DBOctreeNode>& dbNodes)
         }
     }
 
-    std::vector<std::string> filenames;
+    std::vector<std::string> original_filenames;
     {
         for (const auto &entry : fs::directory_iterator(data_dir +"/temp_bin_original_file"))
         {
             const auto &path = entry.path();
-            filenames.push_back(data_dir +"/temp_bin_original_file/" + path.filename().string());
+            original_filenames.push_back(data_dir +"/temp_bin_original_file/" + path.filename().string());
         }
     }
     original_sort_count = 0;
@@ -2171,7 +2269,7 @@ void DataLoader::split_data_to_db1(std::vector<DBOctreeNode>& dbNodes)
     clear_folder(data_dir +"/chunk_original_data");
     tc.tick();
     std::unordered_map<int,std::unordered_map<int,std::int64_t>> block_size;
-    this->para_sort_original_file_by_octree(filenames,query_utils,block_size);
+    this->para_sort_original_file_by_octree(original_filenames,query_utils,block_size);
     // save_map_to_file(block_size,data_dir + "/block_size.bin");
     build_time["to_db_time->sort_by_octree"] = tc.second();
     elog(INFO, "split_data_to_db1: original_sort_count: %ld", original_sort_count.load());
@@ -2232,7 +2330,7 @@ void DataLoader::split_data_to_db1(std::vector<DBOctreeNode>& dbNodes)
             // {
                 TimerClock user_tc;
                 std::ifstream infile(filename, std::ios::binary);
-                std::vector<SpatioTemporalData> buffer(4 * 64 * 1024 * 32/max_concurrent_tasks_for_count_task);
+                std::vector<SpatioTemporalData> buffer(4 * 64 * 1024 * 32/concurrent_task_num);
                 size_t buffer_size = buffer.size();
                 size_t points_read;
                 while (true)
@@ -2258,7 +2356,7 @@ void DataLoader::split_data_to_db1(std::vector<DBOctreeNode>& dbNodes)
                 int current_file_id = file_id++;
                 elog(INFO, "split_data_to_db1: Processed user data file %s, progress: %d/%zu, time: %f seconds", 
                      filename.c_str(), current_file_id, user_filenames.size(), 
-                     user_tc.second()/max_concurrent_tasks_for_count_task);
+                     user_tc.second()/concurrent_task_num);
                 // if(delete_files){
                 //     std::remove(filename.c_str());
                 // }
