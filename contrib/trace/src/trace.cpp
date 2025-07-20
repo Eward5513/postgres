@@ -239,17 +239,19 @@ LoadResult trace_load_data_impl(const std::string& directory,
 }
 
 // Index building implementation
-IndexResult trace_build_index_impl(int chunk_max_level, int octree_max_level, int max_point_per_leaf)
+IndexResult trace_build_index_impl(int chunk_max_level_param, int octree_max_level_param, int max_point_per_leaf_param)
 {
     IndexResult result{};
     
-    // TODO: Implement actual index building logic
-    // For now, just simulate successful index building
+    // Update global parameters with user-specified values
+    ::chunk_max_level = chunk_max_level_param;
+    ::octree_max_level = octree_max_level_param;
+    ::max_point_per_leaf = max_point_per_leaf_param;
     
-    // Store parameters in config
-    config_map["chunk_max_level"] = std::to_string(chunk_max_level);
-    config_map["octree_max_level"] = std::to_string(octree_max_level);
-    config_map["max_point_per_leaf"] = std::to_string(max_point_per_leaf);
+    // Store parameters in config for logging/debugging
+    config_map["chunk_max_level"] = std::to_string(chunk_max_level_param);
+    config_map["octree_max_level"] = std::to_string(octree_max_level_param);
+    config_map["max_point_per_leaf"] = std::to_string(max_point_per_leaf_param);
     
     // Simulate index building
     result.index_build_time = 2.5; // Dummy time

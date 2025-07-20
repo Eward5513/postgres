@@ -9,9 +9,9 @@
 
 inline int concurrent_task_num = std::thread::hardware_concurrency()*2;
 
-constexpr int chunk_max_level = 5;
-constexpr int max_point_per_chunk = 100;
-constexpr int octree_max_level = 12;
+inline int chunk_max_level = 5;
+inline int max_point_per_chunk = 100;
+inline int octree_max_level = 12;
 
 inline std::string data_dir = "/home/zyl/zhangteng/TRACE_buffer/data_buffer";
 

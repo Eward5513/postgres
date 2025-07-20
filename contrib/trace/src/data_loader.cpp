@@ -1531,16 +1531,15 @@ void BuildChunk::build_octree_hierarchy()
  * @param bound Spatial bounding box for the data chunk
  * @param chunk_id Unique identifier for this data chunk
  * @param data Vector of spatiotemporal data points to be indexed
- * @param octree_max_level Maximum depth for octree construction
- * @param max_point_per_leaf Maximum points allowed in octree leaf nodes
- * @param leaf_num Expected number of leaf nodes (used for progress tracking)
+ * 
+ * @note Uses global parameters: octree_max_level, max_point_per_leaf from parameter.h
  * 
  * @note Handles empty chunks by creating minimal valid index structures
  * @note Uses parallel processing for KD-tree construction within leaves
  * @note All index data is persisted to database for later query processing
  * @note Memory cleanup handled automatically via RAII and explicit deletion
  */
-void BuildChunk::build_chunk_spatial_index(Bounds bound, int chunk_id, std::vector<SpatioTemporalData> data, int octree_max_level, int max_point_per_leaf, int leaf_num)
+void BuildChunk::build_chunk_spatial_index(Bounds bound, int chunk_id, std::vector<SpatioTemporalData> data)
 {
     TimerClock tc;
     OctreeBuilder octree_builder(max_point_per_leaf);
@@ -1643,15 +1642,14 @@ OctreeNode *BuildChunk::build_chunk_node_sample(Bounds bounds, uint64_t level, u
             // Note: Parallel implementation commented out for database consistency
             // do_indexing_thread_pool.post_task(
             //     [chunk_data = std::move(chunk_data),bound=node->bound,chunk_id = node->id](){
-            //         build_chunk_spatial_index(bound,chunk_id,std::move(chunk_data),octree_max_level, max_point_per_leaf,-1);
+            //         build_chunk_spatial_index(bound,chunk_id,std::move(chunk_data));
             //     }
             // );
             // do_indexing_thread_pool.wait_for_all_tasks(concurrent_task_num * 2);
             
             // SERIAL IMPLEMENTATION: Build detailed KD-tree index for leaf data
             // This creates fine-grained spatial index within the chunk
-            this->build_chunk_spatial_index(node->bound, node->id, std::move(chunk_data), 
-                           octree_max_level, max_point_per_leaf, -1);
+            this->build_chunk_spatial_index(node->bound, node->id, std::move(chunk_data));
         }
         
         // Log leaf node creation for monitoring and debugging
@@ -1955,7 +1953,7 @@ void DataLoader::split_data(int id,std::vector<DBOctreeNode> &nodes, std::vector
  * @param leafVector Vector of all octree leaf nodes requiring KD-tree indexes
  * 
  * @note Thread pool size controlled by concurrent_task_num parameter
- * @note Each leaf node is processed by newcreateTreeWithLeafNode function
+ * @note Each leaf node is processed by buildKdTreeForLeafNode function
  * @note Synchronization ensures all KD-trees are built before function returns
  * @note Essential for enabling efficient point-in-region queries
  */
@@ -1968,7 +1966,7 @@ void BuildChunk::para_createTreeWithLeafNode(int chunk_id, const vector<SpatioTe
     {
         OctreeNode *node = leafVector[i];
         boost::asio::post(pool, [&, node, chunk_id]()
-                          { this->newcreateTreeWithLeafNode(node, dataPoints, chunk_id); });
+                          { this->buildKdTreeForLeafNode(node, dataPoints, chunk_id); });
     }
     pool.join();
 }
@@ -1997,7 +1995,7 @@ void BuildChunk::para_createTreeWithLeafNode(int chunk_id, const vector<SpatioTe
  * @note All database storage operations are performed through manager classes
  * @note Essential component for enabling efficient spatial point queries
  */
-void BuildChunk::newcreateTreeWithLeafNode(const OctreeNode *node,
+void BuildChunk::buildKdTreeForLeafNode(const OctreeNode *node,
                                const vector<SpatioTemporalData> &dataPoints, int chunk_id)
 {
 

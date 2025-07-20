@@ -106,9 +106,9 @@ public:
 
 private:
     // Private member functions for spatial indexing
-    void build_chunk_spatial_index(Bounds bound, int chunk_id, std::vector<SpatioTemporalData> data, int octree_max_level, int max_point_per_leaf, int leaf_num);
+    void build_chunk_spatial_index(Bounds bound, int chunk_id, std::vector<SpatioTemporalData> data);
     void para_createTreeWithLeafNode(int chunk_id, const std::vector<struct SpatioTemporalData>& dataPoints, const std::vector<OctreeNode*>& leafVector);
-    void newcreateTreeWithLeafNode(const OctreeNode* node, const std::vector<struct SpatioTemporalData>& dataPoints, int chunk_id);
+    void buildKdTreeForLeafNode(const OctreeNode* node, const std::vector<struct SpatioTemporalData>& dataPoints, int chunk_id);
 };
 
 // Global function declarations

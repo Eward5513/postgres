@@ -120,76 +120,13 @@ public:
     size_t leafSizeLimit;
 
 private:
-    OctreeNode *buildOctreeRecursive(const Bounds &bound, std::vector<int> &pointIndices)
-    {
-        if (pointIndices.size() <= leafSizeLimit)
-        {
-            auto *node = new OctreeNode(bound);
-            node->is_leaf = true;
-            node->points = std::move(pointIndices);
-            return node;
-        }
-        auto *node = new OctreeNode(bound);
-        node->is_leaf = false;
-        const auto &min = bound.min;
-        const auto &max = bound.max;
-        SpatioTemporalData center = bound.getCenter();
-        std::vector<int> childIndices[8];
-
-        for (int idx : pointIndices)
-        {
-            const auto &point = dataPoints[idx];
-            uint64_t childIndex = 0;
-            if (point.x < center.x)
-            {
-            }
-            else
-            {
-                childIndex |= 1;
-            }
-            if (point.y < center.y)
-            {
-            }
-            else
-            {
-                childIndex |= 2;
-            }
-            if (point.z < center.z)
-            {
-            }
-            else
-            {
-                childIndex |= 4;
-            }
-            childIndices[childIndex].push_back(idx);
-        }
-
-        for (int i = 0; i < 8; ++i)
-        {
-            // if (!childIndices[i].empty())
-            {
-                SpatioTemporalData childMin = min;
-                SpatioTemporalData childMax = max;
-
-                if (i & 1)
-                    childMin.x = center.x;
-                else
-                    childMax.x = center.x;
-                if (i & 2)
-                    childMin.y = center.y;
-                else
-                    childMax.y = center.y;
-                if (i & 4)
-                    childMin.z = center.z;
-                else
-                    childMax.z = center.z;
-
-                Bounds childBound = {childMin, childMax};
-                node->children[i] = buildOctreeRecursive(childBound, childIndices[i]);
-            }
-        }
-        return node;
-    }
+    /**
+     * @brief Recursively build octree structure using spatial subdivision
+     * @param bound Spatial boundary for the current octree node
+     * @param pointIndices Vector of indices referencing dataPoints to be subdivided
+     * @return Pointer to newly created OctreeNode
+     */
+    OctreeNode *buildOctreeRecursive(const Bounds &bound, std::vector<int> &pointIndices);
 };
 
 /**
