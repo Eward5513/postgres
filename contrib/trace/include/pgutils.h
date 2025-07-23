@@ -1,7 +1,6 @@
 #ifndef PGUTILS_H
 #define PGUTILS_H
 
-#include <mutex>
 #include <cstddef>
 
 extern "C" {
@@ -215,6 +214,13 @@ public:
      */
     DualKeyBinarySelectResult* executeBinarySelectAllDualKey(const char* table_name);
     
+    /**
+     * @brief Execute PostgreSQL COPY FROM file operation
+     * @param file_path Full path to the binary data file
+     * @param table_name Name of target table for COPY operation
+     */
+    void executeCopyFromFile(const char* file_path, const char* table_name);
+    
     // ============================================================================
     // Memory Management Utilities
     // ============================================================================
@@ -311,27 +317,12 @@ private:
     /**
      * @brief Private constructor
      */
-    PostgreSQLUtils() : sql_call_count_(0), insert_call_count_(0) {}
+    PostgreSQLUtils() = default;
     
     /**
      * @brief Private destructor
      */
     ~PostgreSQLUtils() = default;
-    
-    /**
-     * @brief Mutex to protect all SPI operations
-     */
-    std::mutex spi_mutex_;
-    
-    /**
-     * @brief Call count for executeSQL function
-     */
-    int sql_call_count_;
-    
-    /**
-     * @brief Call count for executeBinaryInsert function
-     */
-    int insert_call_count_;
 };
 
 // Global instance for convenient access

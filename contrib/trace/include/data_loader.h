@@ -63,8 +63,19 @@ class DataLoader{
     void sort_original_file_by_octree(const std::string& filename, class OctreePointQuery& query_utils, std::unordered_map<int,std::unordered_map<int,std::int64_t>>& block_size, std::mutex& mutex);
     void para_sort_original_file_by_octree(const std::vector<std::string>& filenames, class OctreePointQuery& query_utils, std::unordered_map<int,std::unordered_map<int,std::int64_t>>& block_size);
     
+    // New functions for obj file processing and copy operations
+    void convert_obj_file_to_binary(const std::string& obj_filename, size_t file_id, 
+                                   const std::string& pc_data_dir, const std::string& mesh_data_dir);
+    void load_binary_data_to_database(const std::string& pc_data_dir, const std::string& mesh_data_dir);
+    
+    // Helper functions for binary data writing
+    void write_point_cloud_binary(const std::string& output_file, size_t file_id, 
+                                 const std::vector<std::array<float, 3>>& vertex_data);
+    void write_mesh_binary(const std::string& output_file, size_t file_id, 
+                          const std::vector<std::vector<int32_t>>& face_data);
+    
     // Member variables
-    std::string directory;
+    std::string original_directory;
     int max_file_num;
     float sample_ratio;
     std::vector<std::string> filenames;

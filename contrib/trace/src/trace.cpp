@@ -220,7 +220,7 @@ LoadResult trace_load_data_impl(const std::string& directory,
     }
 
     DataLoader dataLoader(directory, max_file_num, sample_ratio);
-    std::vector<std::string> filenames = dataLoader.load_data();    
+    std::vector<std::string> filenames = dataLoader.load_data();
 
     result.files_loaded = filenames.size();
     result.total_points = filenames.size() * 1000; // 估算点数

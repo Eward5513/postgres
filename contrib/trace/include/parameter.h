@@ -6,6 +6,7 @@
 #include <atomic>
 #include <mutex>
 #include <unordered_map>
+#include <thread>
 
 inline int concurrent_task_num = std::thread::hardware_concurrency()*2;
 

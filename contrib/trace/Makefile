@@ -21,6 +21,8 @@ EXTENSION = trace
 DATA = trace--1.0.sql
 PGFILEDESC = "TRACE - Time-Spatial Trajectory Analysis and Computation Engine Extension"
 
+# Regression tests
+REGRESS = trace_load_data
 
 # 使用PGXS构建系统（默认）
 # ifndef NO_PGXS
@@ -61,12 +63,8 @@ src/%.o: src/%.cpp
 
 # 自定义清理规则
 clean-extra:
-	rm -f src/*.o include/*~ test/*~
+	rm -f src/*.o include/*~ sql/*~ expected/*~
 
 clean: clean-extra
 
-# 安装后测试
-installcheck: install
-	$(MAKE) -C test installcheck
-
-.PHONY: clean-extra installcheck 
+.PHONY: clean-extra 

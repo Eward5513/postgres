@@ -91,12 +91,7 @@ PostgreSQLUtils& pgutils = PostgreSQLUtils::getInstance();
  * pgutils.executeSQL("UPDATE users SET name = 'Jane Doe' WHERE id = 1");
  */
 void PostgreSQLUtils::executeSQL(const char* sql) {
-    std::lock_guard<std::mutex> lock(spi_mutex_);
-    
-    // Increment call count for debugging and monitoring
-    sql_call_count_++;
-    
-    elog(INFO, "PostgreSQLUtils::executeSQL #%d: %s", sql_call_count_, sql);
+    elog(INFO, "PostgreSQLUtils::executeSQL: %s", sql);
 
     if (SPI_connect() != SPI_OK_CONNECT) {
         ereport(ERROR, (errcode(ERRCODE_INTERNAL_ERROR),
@@ -143,8 +138,6 @@ void PostgreSQLUtils::executeSQL(const char* sql) {
  * }
  */
 SPITupleTable* PostgreSQLUtils::executeSQLSelect(const char* sql) {
-    std::lock_guard<std::mutex> lock(spi_mutex_);
-    
     if (SPI_connect() != SPI_OK_CONNECT) {
         ereport(ERROR, (errcode(ERRCODE_INTERNAL_ERROR),
                        errmsg("could not connect to SPI")));
@@ -217,14 +210,8 @@ SPITupleTable* PostgreSQLUtils::executeSQLSelect(const char* sql) {
  */
 void PostgreSQLUtils::executeBinaryInsert(const char* table_name, int key_value, 
                                          const void* binary_data, size_t binary_size) {
-    std::lock_guard<std::mutex> lock(spi_mutex_);
-    
-    // Increment call count for monitoring
-    insert_call_count_++;
-    
-    // Record call information for debugging
-    elog(INFO, "PostgreSQLUtils::executeBinaryInsert #%d: table=%s, key=%d, data_size=%zu bytes", 
-         insert_call_count_, table_name, key_value, binary_size);
+    elog(INFO, "PostgreSQLUtils::executeBinaryInsert: table=%s, key=%d, data_size=%zu bytes", 
+         table_name, key_value, binary_size);
     
     if (SPI_connect() != SPI_OK_CONNECT) {
         ereport(ERROR, (errcode(ERRCODE_INTERNAL_ERROR),
@@ -250,11 +237,6 @@ void PostgreSQLUtils::executeBinaryInsert(const char* table_name, int key_value,
     memcpy(VARDATA(binary_bytea), binary_data, binary_size);
     values[1] = PointerGetDatum(binary_bytea);
     
-    // Log memory allocation details
-    size_t allocated_size = VARHDRSZ + binary_size;
-    elog(INFO, "PostgreSQLUtils::executeBinaryInsert #%d: allocated bytea size=%zu bytes (header=%d + data=%zu)", 
-         insert_call_count_, allocated_size, VARHDRSZ, binary_size);
-    
     // Prepare and execute the statement
     SPIPlanPtr plan = SPI_prepare(sql_buf.data, 2, argtypes);
     if (plan == NULL) {
@@ -273,9 +255,8 @@ void PostgreSQLUtils::executeBinaryInsert(const char* table_name, int key_value,
                        errmsg("SPI_execute_plan failed for INSERT")));
     }
     
-    // Log successful operation
-    elog(INFO, "PostgreSQLUtils::executeBinaryInsert #%d: SUCCESS - inserted %zu bytes into %s[key=%d]", 
-         insert_call_count_, binary_size, table_name, key_value);
+    elog(INFO, "PostgreSQLUtils::executeBinaryInsert: SUCCESS - inserted %zu bytes into %s[key=%d]", 
+         binary_size, table_name, key_value);
     
     SPI_freeplan(plan);
     pfree(sql_buf.data);
@@ -314,7 +295,6 @@ void PostgreSQLUtils::executeBinaryInsert(const char* table_name, int key_value,
  * }
  */
 BinarySelectResult* PostgreSQLUtils::executeBinarySelect(const char* table_name, int key_value) {
-    std::lock_guard<std::mutex> lock(spi_mutex_);
     
     // Log function entry with parameters
     elog(INFO, "PostgreSQLUtils::executeBinarySelect: table=%s, key=%d", table_name, key_value);
@@ -456,7 +436,6 @@ BinarySelectResult* PostgreSQLUtils::executeBinarySelect(const char* table_name,
  * }
  */
 BinarySelectAllResult* PostgreSQLUtils::executeBinarySelectAll(const char* table_name) {
-    std::lock_guard<std::mutex> lock(spi_mutex_);
     
     if (SPI_connect() != SPI_OK_CONNECT) {
         ereport(ERROR, (errcode(ERRCODE_INTERNAL_ERROR),
@@ -555,7 +534,6 @@ BinarySelectAllResult* PostgreSQLUtils::executeBinarySelectAll(const char* table
  */
 void PostgreSQLUtils::executeBinaryInsertDualKey(const char* table_name, int key1_value, int key2_value,
                                                 const void* binary_data, size_t binary_size) {
-    std::lock_guard<std::mutex> lock(spi_mutex_);
     
     if (SPI_connect() != SPI_OK_CONNECT) {
         ereport(ERROR, (errcode(ERRCODE_INTERNAL_ERROR),
@@ -635,7 +613,6 @@ void PostgreSQLUtils::executeBinaryInsertDualKey(const char* table_name, int key
  */
 void PostgreSQLUtils::executeBinaryUpsertDualKey(const char* table_name, int key1_value, int key2_value,
                                                 const void* binary_data, size_t binary_size) {
-    std::lock_guard<std::mutex> lock(spi_mutex_);
     
     if (SPI_connect() != SPI_OK_CONNECT) {
         ereport(ERROR, (errcode(ERRCODE_INTERNAL_ERROR),
@@ -717,7 +694,6 @@ void PostgreSQLUtils::executeBinaryUpsertDualKey(const char* table_name, int key
  * }
  */
 BinarySelectResult* PostgreSQLUtils::executeBinarySelectByDualKey(const char* table_name, int key1_value, int key2_value) {
-    std::lock_guard<std::mutex> lock(spi_mutex_);
     
     if (SPI_connect() != SPI_OK_CONNECT) {
         ereport(ERROR, (errcode(ERRCODE_INTERNAL_ERROR),
@@ -827,7 +803,6 @@ BinarySelectResult* PostgreSQLUtils::executeBinarySelectByDualKey(const char* ta
  * }
  */
 DualKeyBinarySelectResult* PostgreSQLUtils::executeBinarySelectByKey1(const char* table_name, int key1_value) {
-    std::lock_guard<std::mutex> lock(spi_mutex_);
     
     if (SPI_connect() != SPI_OK_CONNECT) {
         ereport(ERROR, (errcode(ERRCODE_INTERNAL_ERROR),
@@ -941,7 +916,6 @@ DualKeyBinarySelectResult* PostgreSQLUtils::executeBinarySelectByKey1(const char
  * }
  */
 DualKeyBinarySelectResult* PostgreSQLUtils::executeBinarySelectAllDualKey(const char* table_name) {
-    std::lock_guard<std::mutex> lock(spi_mutex_);
     
     if (SPI_connect() != SPI_OK_CONNECT) {
         ereport(ERROR, (errcode(ERRCODE_INTERNAL_ERROR),
@@ -1045,7 +1019,6 @@ DualKeyBinarySelectResult* PostgreSQLUtils::executeBinarySelectAllDualKey(const 
  * // All large objects and table records are now properly deleted
  */
 void PostgreSQLUtils::executeLargeObjectClearTable(const char* table_name) {
-    std::lock_guard<std::mutex> lock(spi_mutex_);
     
     if (SPI_connect() != SPI_OK_CONNECT) {
         ereport(ERROR, (errcode(ERRCODE_INTERNAL_ERROR),
@@ -1143,7 +1116,6 @@ void PostgreSQLUtils::executeLargeObjectClearTable(const char* table_name) {
  */
 void PostgreSQLUtils::executeLargeObjectInsert(const char* table_name, int key_value,
                                               const void* binary_data, size_t binary_size) {
-    std::lock_guard<std::mutex> lock(spi_mutex_);
     
     if (SPI_connect() != SPI_OK_CONNECT) {
         ereport(ERROR, (errcode(ERRCODE_INTERNAL_ERROR),
@@ -1258,7 +1230,6 @@ void PostgreSQLUtils::executeLargeObjectInsert(const char* table_name, int key_v
  * }
  */
 LargeObjectSelectResult* PostgreSQLUtils::executeLargeObjectSelectByKey(const char* table_name, int key_value) {
-    std::lock_guard<std::mutex> lock(spi_mutex_);
     
     if (SPI_connect() != SPI_OK_CONNECT) {
         ereport(ERROR, (errcode(ERRCODE_INTERNAL_ERROR),
@@ -1400,7 +1371,6 @@ LargeObjectSelectResult* PostgreSQLUtils::executeLargeObjectSelectByKey(const ch
  */
 void PostgreSQLUtils::executeLargeObjectInsertDualKey(const char* table_name, int key1_value, int key2_value,
                                                      const void* binary_data, size_t binary_size) {
-    std::lock_guard<std::mutex> lock(spi_mutex_);
     
     if (SPI_connect() != SPI_OK_CONNECT) {
         ereport(ERROR, (errcode(ERRCODE_INTERNAL_ERROR),
@@ -1509,7 +1479,6 @@ void PostgreSQLUtils::executeLargeObjectInsertDualKey(const char* table_name, in
  */
 void PostgreSQLUtils::executeLargeObjectUpdateDualKey(const char* table_name, int key1_value, int key2_value,
                                                      const void* binary_data, size_t binary_size) {
-    std::lock_guard<std::mutex> lock(spi_mutex_);
     
     if (SPI_connect() != SPI_OK_CONNECT) {
         ereport(ERROR, (errcode(ERRCODE_INTERNAL_ERROR),
@@ -1650,7 +1619,6 @@ void PostgreSQLUtils::executeLargeObjectUpdateDualKey(const char* table_name, in
  * }
  */
 LargeObjectSelectResult* PostgreSQLUtils::executeLargeObjectSelectByDualKey(const char* table_name, int key1_value, int key2_value) {
-    std::lock_guard<std::mutex> lock(spi_mutex_);
     
     if (SPI_connect() != SPI_OK_CONNECT) {
         ereport(ERROR, (errcode(ERRCODE_INTERNAL_ERROR),
@@ -1787,7 +1755,6 @@ LargeObjectSelectResult* PostgreSQLUtils::executeLargeObjectSelectByDualKey(cons
  * }
  */
 DualKeyBinarySelectResult* PostgreSQLUtils::executeLargeObjectSelectByKey1(const char* table_name, int key1_value) {
-    std::lock_guard<std::mutex> lock(spi_mutex_);
     
     if (SPI_connect() != SPI_OK_CONNECT) {
         ereport(ERROR, (errcode(ERRCODE_INTERNAL_ERROR),
@@ -1918,7 +1885,6 @@ DualKeyBinarySelectResult* PostgreSQLUtils::executeLargeObjectSelectByKey1(const
  * }
  */
 DualKeyBinarySelectResult* PostgreSQLUtils::executeLargeObjectSelectAllDualKey(const char* table_name) {
-    std::lock_guard<std::mutex> lock(spi_mutex_);
     
     if (SPI_connect() != SPI_OK_CONNECT) {
         ereport(ERROR, (errcode(ERRCODE_INTERNAL_ERROR),

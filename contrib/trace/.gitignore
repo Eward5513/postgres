@@ -53,8 +53,8 @@ core.*
 ../TSDMP/src/*.o
 
 # Test output
-test/results/
-test/tmp/
+regression.diffs
+regression.out
 
 # Package files
 *.tar.gz

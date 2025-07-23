@@ -14,10 +14,7 @@ CREATE TYPE spatiotemporal_point AS (
     point_id INTEGER,
     user_id SMALLINT,
     intensity REAL,
-    speed REAL,
-    color_r SMALLINT,
-    color_g SMALLINT,
-    color_b SMALLINT
+    speed REAL
 );
 
 -- 加载结果类型
@@ -93,6 +90,35 @@ CREATE TABLE IF NOT EXISTS trajectory_table (
     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
     updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
 );
+
+-- 点云数据存储表 (用于存储从.obj文件中提取的顶点数据)
+CREATE TABLE IF NOT EXISTS point_cloud (
+    id SERIAL PRIMARY KEY,
+    file_id INTEGER NOT NULL,
+    vertex_id INTEGER NOT NULL,
+    x REAL NOT NULL,
+    y REAL NOT NULL,
+    z REAL NOT NULL,
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    UNIQUE(file_id, vertex_id)
+);
+
+-- 网格数据存储表 (用于存储从.obj文件中提取的面数据)
+CREATE TABLE IF NOT EXISTS mesh (
+    id SERIAL PRIMARY KEY,
+    file_id INTEGER NOT NULL,
+    face_id INTEGER NOT NULL,
+    vertex_count INTEGER NOT NULL,
+    vertex_indices INTEGER[] NOT NULL,
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    UNIQUE(file_id, face_id)
+);
+
+-- 为点云表创建索引
+CREATE INDEX IF NOT EXISTS idx_point_cloud_spatial ON point_cloud(x, y, z);
+
+-- 为网格表创建索引
+CREATE INDEX IF NOT EXISTS idx_mesh_face_id ON mesh(face_id);
 
 -- 函数声明
 
@@ -170,4 +196,4 @@ CREATE OR REPLACE FUNCTION trace_get_config(
 )
 RETURNS TEXT
 AS 'MODULE_PATHNAME', 'trace_get_config'
-LANGUAGE C STRICT; 
+LANGUAGE C STRICT;
