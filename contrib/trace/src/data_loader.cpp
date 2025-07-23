@@ -252,29 +252,29 @@ void DataLoader::build_index()
     tc.tick();
     elog(INFO, "build chunk");
     OctreeNode *root = this->building_octree_bottom_up_top_down(global_bound);// build chunk
-    // std::vector<DBOctreeNode> dbNodes = convertOctreeToDB(root);
-    // octreeNodeManager.writeOctreeNodesToDatabase(-1, dbNodes);
-    // // if(delete_files)
-    // // std::remove((data_dir + "/sample_data/all_sampled_data.bin").c_str());
-    // this->build_time["doChunking_time->chunk_constrution_time"] = tc.second();
-    // if (0)
-    // { // validation
-    //     elog(INFO, "validation");
-    //     dbNodes = octreeNodeManager.loadOctreeNodesFromDatabase(-1);
-    //     elog(INFO, "dbNodes: %zu", dbNodes.size());
-    //     if (validateConversion(root, dbNodes, 0))
-    //     {
-    //         elog(INFO, "Validation passed: The structures are consistent.");
-    //     }
-    //     else
-    //     {
-    //         elog(ERROR, "Validation failed: The structures are not consistent.");
-    //     }
-    // }
-    // elog(INFO, "create chunk time: %f seconds", tc.second());
-    // delete root;
+    std::vector<DBOctreeNode> dbNodes = convertOctreeToDB(root);
+    octreeNodeManager.writeOctreeNodesToDatabase(-1, dbNodes);
+    // if(delete_files)
+    // std::remove((data_dir + "/sample_data/all_sampled_data.bin").c_str());
+    this->build_time["doChunking_time->chunk_constrution_time"] = tc.second();
+    if (0)
+    { // validation
+        elog(INFO, "validation");
+        dbNodes = octreeNodeManager.loadOctreeNodesFromDatabase(-1);
+        elog(INFO, "dbNodes: %zu", dbNodes.size());
+        if (validateConversion(root, dbNodes, 0))
+        {
+            elog(INFO, "Validation passed: The structures are consistent.");
+        }
+        else
+        {
+            elog(ERROR, "Validation failed: The structures are not consistent.");
+        }
+    }
+    elog(INFO, "create chunk time: %f seconds", tc.second());
+    delete root;
 
-    // split_data_to_db1(dbNodes);
+    split_data_to_db1(dbNodes);
 }
 
 /**

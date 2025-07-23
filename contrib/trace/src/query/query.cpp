@@ -681,43 +681,41 @@ auto IndexFront::remove(const std::vector<SpatioTemporalData> &points)
     elog(LOG, "deleted sample ratio: %f", double(deleted_sample)/deleted_original);
 }
 
-// NOTE: The following query functions are placeholder implementations
-// that need to be completed based on specific requirements
-
-/**
- * @brief Execute spatial-temporal range query (placeholder)
- * @param bound Spatial bounds for the query
- * @param min_time Minimum timestamp
- * @param max_time Maximum timestamp  
- * @param type Data type filter
- * @return Empty PointSetObject (placeholder implementation)
- * 
- * TODO: Implement optimized range query using spatial index structures
- */
-IndexFront::result_type IndexFront::range_query(SpatialBounds &bound, float min_time, float max_time, DataType type)
-{
-    // TODO: Implement range query
-    return PointSetObject();
+IndexFront::result_type IndexFront::range_query(SpatialBounds &bound, float min_time, float max_time, DataType type) {
+    db_time = 0;
+    tc.tick();
+    std::unordered_map<int, std::unordered_map<int, std::vector<SpatioTemporalData> > > result_out;
+    _range_query(bound, min_time, max_time, octree_nodes, result_out, type, thread_pool, db_time);
+    query_time = tc.milliSec() - db_time;
+    tc.tick();
+    auto result = result_type(result_out);
+    format_time = tc.milliSec();
+    return result;
 }
 
-/**
- * @brief Execute mesh-based spatial query (placeholder)
- * TODO: Implement polygon-based spatial query
- */
-IndexFront::result_type IndexFront::mesh_query(Polygon &polygon, float min_time, float max_time, DataType type)
-{
-    // TODO: Implement mesh query
-    return PointSetObject();
+IndexFront::result_type IndexFront::mesh_query(Polygon &polygon, float min_time, float max_time, DataType type) {
+    db_time = 0;
+    tc.tick();
+    std::unordered_map<int, std::unordered_map<int, std::vector<SpatioTemporalData> > > result_out;
+    _mesh_query(polygon, min_time, max_time, octree_nodes, result_out, type, thread_pool, db_time);
+    query_time = tc.milliSec() - db_time;
+    tc.tick();
+    auto result = result_type(result_out);
+    format_time = tc.milliSec();
+    return result;
 }
 
-/**
- * @brief Execute buffer query (placeholder)
- * TODO: Implement buffered spatial query
- */
-IndexFront::result_type IndexFront::buffer_query(SpatialBounds &bound, float buffer_size, float min_time, float max_time, DataType type)
-{
-    // TODO: Implement buffer query
-    return PointSetObject();
+IndexFront::result_type IndexFront::buffer_query(SpatialBounds &bound, float buffer_size, float min_time,
+                                                 float max_time, DataType type) {
+    db_time = 0;
+    tc.tick();
+    std::unordered_map<int, std::unordered_map<int, std::vector<SpatioTemporalData> > > loaded_data;
+    _buffer_query(bound, buffer_size, min_time, max_time, octree_nodes, loaded_data, type, thread_pool, db_time);
+    query_time = tc.milliSec() - db_time;
+    tc.tick();
+    auto result = result_type(loaded_data);
+    format_time = tc.milliSec();
+    return result;
 }
 
 /**
@@ -847,4 +845,67 @@ GroundTruth::result_type GroundTruth::similarity_query(SpatialBounds &bound, std
 {
     // TODO: Implement ground truth similarity query
     return PointSetObject();
-} 
+}
+
+void _range_query(SpatialBounds &bound, float min_time, float max_time, std::vector<DBOctreeNode> &nodes, std::unordered_map<int, std::unordered_map<int, std::vector<SpatioTemporalData>>> &result_out, DataType type, ThreadPoolWrapper &thread_pool, double &db_time)
+{
+    TimerClock tc;
+    std::vector<DBOctreeNode> leaves;
+    range_qurey_octree(bound, nodes, leaves);
+    
+    #ifdef output_info
+    std::cout << "get leaves time:" << tc.milliSec() << "ms leaves-size:"<< leaves.size() << std::endl;
+    #endif
+    tc.tick();
+    std::vector<std::pair<DBOctreeNode, std::vector<SpatioTemporalData> *>> result_to_filter;
+    for (const auto &leaf : leaves)
+    {
+        result_to_filter.push_back({leaf, &result_out[leaf.oc_id][leaf.kd_id]});
+    }
+
+    auto splited_tasks = split<std::int64_t>(0,result_to_filter.size(), std::min<std::int64_t>(result_to_filter.size(),thread_pool_size));
+    for(auto task:splited_tasks){
+        if(0){//single thread
+            for (std::int64_t i = task.first; i < task.second; ++i)
+            {
+                auto &leaf = result_to_filter[i].first;
+                *result_to_filter[i].second = std::move(OriginalDataManager::loadOriginalDataFromDatabase(leaf.oc_id, leaf.kd_id));
+            }
+            continue;
+        }
+        thread_pool.post_task(
+        [&result_to_filter, &result_out, task]()
+        {
+            for (std::int64_t i = task.first; i < task.second; ++i)
+            {
+                auto &leaf = result_to_filter[i].first;
+                *result_to_filter[i].second = std::move(OriginalDataManager::loadOriginalDataFromDatabase(leaf.oc_id, leaf.kd_id));
+            }
+        });
+    }
+
+    thread_pool.wait_for_all_tasks();
+    db_time = tc.milliSec();
+    #ifdef output_info
+    std::cout << "query DB time:" << tc.milliSec() << "ms" << std::endl;
+    #endif
+    tc.tick();
+    splited_tasks = split<std::int64_t>(0,result_to_filter.size(), std::min<std::int64_t>(std::sqrt(result_to_filter.size()),thread_pool_size));
+    std::atomic<double> querfilter_time = 0;
+    for(auto task:splited_tasks){
+        thread_pool.post_task(
+            [&,task]()
+            {
+                for (std::int64_t i = task.first; i < task.second; ++i)
+                {
+                    filter(bound, min_time, max_time, *result_to_filter[i].second, type, !bound.contains(result_to_filter[i].first.bound));
+                }
+            });
+        }
+
+    thread_pool.wait_for_all_tasks();
+
+    #ifdef output_info
+    std::cout << "filter time:" << tc.milliSec() << "ms" << std::endl;
+    #endif
+}
