@@ -128,12 +128,27 @@ SimplePoint point_from_pg_args(float x, float y, float z, float time)
 // PostgreSQL result creation functions
 HeapTuple create_load_result_tuple(const LoadResult& result, TupleDesc tupdesc)
 {
-    Datum values[3];
-    bool nulls[3] = {false, false, false};
+    Datum values[14];  // 增加到14个字段 (0-13)
+    bool nulls[14] = {false};  // 初始化所有为 false
     
     values[0] = Int32GetDatum(result.files_loaded);
     values[1] = Int64GetDatum(result.total_points);
     values[2] = Float4GetDatum(result.load_time_seconds);
+    
+    // 边界信息
+    values[3] = Float4GetDatum(result.min_x);
+    values[4] = Float4GetDatum(result.max_x);
+    values[5] = Float4GetDatum(result.min_y);
+    values[6] = Float4GetDatum(result.max_y);
+    values[7] = Float4GetDatum(result.min_z);
+    values[8] = Float4GetDatum(result.max_z);
+    values[9] = Float4GetDatum(result.min_time);
+    values[10] = Float4GetDatum(result.max_time);
+    
+    // 统计信息
+    values[11] = Int64GetDatum(result.total_file_size_bytes);
+    values[12] = Float4GetDatum(result.avg_points_per_file);
+    values[13] = CStringGetTextDatum(result.dataset_path.c_str());
     
     return heap_form_tuple(tupdesc, values, nulls);
 }
@@ -205,6 +220,10 @@ LoadResult trace_load_data_impl(const std::string& directory,
                                int max_file_num, float sample_ratio)
 {
     LoadResult result{};
+    result.dataset_path = directory;
+    
+    auto start_time = std::chrono::high_resolution_clock::now();
+    
     // Check if directory exists and is not empty
     fs::path dir_path(directory);
     if (!fs::exists(dir_path)) {
@@ -219,21 +238,95 @@ LoadResult trace_load_data_impl(const std::string& directory,
         elog(ERROR, "Directory '%s' is empty", directory.c_str());
     }
 
+    // 直接遍历文件夹获取文件列表
+    std::vector<std::string> filenames;
+    for (const auto &entry : fs::directory_iterator(directory))
+    {
+        const auto &path = entry.path();
+        auto filename = path.filename().string();
+        
+        // Skip hidden files and directories
+        if (filename[0] == '.' || entry.is_directory()) {
+            continue;
+        }
+        
+        // Only accept CSV files (comma-separated values)
+        if (path.extension() == ".csv") {
+            filenames.push_back(path.string());
+        }
+    }
+    
+    // Apply file limit if specified
+    if (max_file_num > 0 && filenames.size() > max_file_num) {
+        filenames.resize(max_file_num);
+    }
+    
+    elog(INFO, "Found %zu data files to process", filenames.size());
+    
+    // 创建 DataLoader 实例并传入文件名数组处理，直接获取计算的边界
     DataLoader dataLoader(directory, max_file_num, sample_ratio);
-    std::vector<std::string> filenames = dataLoader.load_data();
+    SimpleBounds bounds = dataLoader.load_data(filenames);  // 传入文件名数组并获取边界
 
+    // 收集详细统计信息
     result.files_loaded = filenames.size();
-    result.total_points = filenames.size() * 1000; // 估算点数
-    result.load_time_seconds = 0.1f; // 模拟加载时间
+    result.total_file_size_bytes = 0;
+    result.loaded_file_paths = filenames;  // 存储文件路径到 LoadResult 中
+    
+    // 计算文件大小
+    for (const auto& filename : filenames) {
+        fs::path file_path(filename);
+        if (fs::exists(file_path)) {
+            result.total_file_size_bytes += fs::file_size(file_path);
+        }
+    }
+    // 检查是否有有效的边界数据（非零值表示有效数据）
+    bool has_valid_bounds = (bounds.min_x != 0.0f || bounds.max_x != 0.0f || 
+                            bounds.min_y != 0.0f || bounds.max_y != 0.0f ||
+                            bounds.min_z != 0.0f || bounds.max_z != 0.0f);
+    
+    if (has_valid_bounds) {
+        // 有效的边界数据
+        result.min_x = bounds.min_x;
+        result.max_x = bounds.max_x;
+        result.min_y = bounds.min_y;
+        result.max_y = bounds.max_y;
+        result.min_z = bounds.min_z;
+        result.max_z = bounds.max_z;
+        result.min_time = bounds.min_time;
+        result.max_time = bounds.max_time;
+        
+        // 估算点数（可以基于文件数量和边界范围进行更精确的估算）
+        result.total_points = filenames.size() * 1000; // 临时估算，可以改进
+    } else {
+        // 没有有效数据，使用默认值
+        elog(WARNING, "No valid boundary data found, using default values");
+        result.min_x = result.min_y = result.min_z = result.min_time = 0.0f;
+        result.max_x = result.max_y = result.max_z = 100.0f;
+        result.max_time = 1000.0f;
+        result.total_points = 0;
+    }
+    
+    // 计算平均值
+    result.avg_points_per_file = result.files_loaded > 0 ? 
+        (float)result.total_points / result.files_loaded : 0.0f;
+    
+    // 计算加载时间
+    auto end_time = std::chrono::high_resolution_clock::now();
+    result.load_time_seconds = std::chrono::duration<float>(end_time - start_time).count();
     
     // 存储到全局变量
     data_source_files = filenames;
-    // 设置默认全局边界
-    global_bounds = SimpleBounds(0.0f, 0.0f, 0.0f, 0.0f,  // min values
-                            100.0f, 100.0f, 100.0f, 1000.0f); // max values
+    // 设置全局边界（使用计算出的边界）
+    global_bounds = SimpleBounds(result.min_x, result.min_y, result.min_z, result.min_time,
+                                result.max_x, result.max_y, result.max_z, result.max_time);
     
-    elog(INFO, "Loaded %d files from directory '%s' with %ld total points", 
-         result.files_loaded, directory.c_str(), result.total_points);
+    elog(INFO, "Loaded %d files from directory '%s' with %ld total points, "
+              "bounds: Longitude[%.6f-%.6f], Latitude[%.6f-%.6f], Altitude[%.3f-%.3f], "
+              "total size: %ld bytes, avg points/file: %.1f", 
+         result.files_loaded, directory.c_str(), result.total_points,
+         result.min_x, result.max_x, result.min_y, result.max_y, 
+         result.min_z, result.max_z,
+         result.total_file_size_bytes, result.avg_points_per_file);
     
     return result;
 }

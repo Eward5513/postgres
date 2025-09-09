@@ -29,6 +29,7 @@
 #include <string>
 #include <vector>
 #include <utility>
+#include <cfloat>
 
 // ============================================================================
 // Data Type Constants and Enumerations
@@ -119,7 +120,24 @@ struct LoadResult {
     long long total_points;
     float load_time_seconds;
     
-    LoadResult() : files_loaded(0), total_points(0), load_time_seconds(0.0f) {}
+    // 新增统计信息
+    float min_x, max_x;
+    float min_y, max_y;
+    float min_z, max_z;
+    float min_time, max_time;
+    long long total_file_size_bytes;
+    float avg_points_per_file;
+    std::string dataset_path;
+    
+    // 加载的文件路径列表
+    std::vector<std::string> loaded_file_paths;
+    
+    LoadResult() : files_loaded(0), total_points(0), load_time_seconds(0.0f),
+                   min_x(FLT_MAX), max_x(-FLT_MAX), 
+                   min_y(FLT_MAX), max_y(-FLT_MAX),
+                   min_z(FLT_MAX), max_z(-FLT_MAX),
+                   min_time(FLT_MAX), max_time(-FLT_MAX),
+                   total_file_size_bytes(0), avg_points_per_file(0.0f) {}
 };
 
 struct IndexResult {

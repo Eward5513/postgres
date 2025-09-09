@@ -21,7 +21,20 @@ CREATE TYPE spatiotemporal_point AS (
 CREATE TYPE load_result AS (
     files_loaded INTEGER,
     total_points BIGINT,
-    load_time_seconds REAL
+    load_time_seconds REAL,
+    -- 边界信息
+    min_x REAL,
+    max_x REAL,
+    min_y REAL,
+    max_y REAL,
+    min_z REAL,
+    max_z REAL,
+    min_time REAL,
+    max_time REAL,
+    -- 统计信息
+    total_file_size_bytes BIGINT,
+    avg_points_per_file REAL,
+    dataset_path TEXT
 );
 
 -- 索引构建结果类型
@@ -91,6 +104,37 @@ CREATE TABLE IF NOT EXISTS trajectory_table (
     updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
 );
 
+-- 数据集信息表 (单行存储当前加载的数据集信息)
+CREATE TABLE IF NOT EXISTS trace_dataset_info (
+    id INTEGER PRIMARY KEY DEFAULT 1,
+    dataset_path TEXT NOT NULL,
+    last_load_time TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    total_files INTEGER NOT NULL,
+    total_points BIGINT NOT NULL,
+    sample_ratio REAL NOT NULL,
+    
+    -- 空间边界
+    min_x REAL NOT NULL,
+    max_x REAL NOT NULL,
+    min_y REAL NOT NULL,
+    max_y REAL NOT NULL,
+    min_z REAL NOT NULL,
+    max_z REAL NOT NULL,
+    
+    -- 时间边界
+    min_time REAL,
+    max_time REAL,
+    
+    -- 加载耗时
+    load_duration_seconds REAL,
+    
+    -- 文件路径列表（JSON格式存储）
+    file_paths JSONB,
+    
+    -- 确保只有一行数据
+    CONSTRAINT single_row CHECK (id = 1)
+);
+
 -- 点云数据存储表 (用于存储从.obj文件中提取的顶点数据)
 CREATE TABLE IF NOT EXISTS point_cloud (
     id SERIAL PRIMARY KEY,
@@ -133,11 +177,11 @@ AS 'MODULE_PATHNAME', 'trace_load_data'
 LANGUAGE C STRICT;
 
 -- 索引构建函数
-CREATE OR REPLACE FUNCTION trace_build_index(
-    chunk_max_level INTEGER DEFAULT 6,
-    octree_max_level INTEGER DEFAULT 12,
-    max_point_per_leaf INTEGER DEFAULT 400
-)
+-- 使用 GUC 变量进行配置:
+-- SET trace.chunk_max_level = 8;
+-- SET trace.octree_max_level = 15;
+-- SET trace.max_point_per_leaf = 2000;
+CREATE OR REPLACE FUNCTION trace_build_index()
 RETURNS index_result
 AS 'MODULE_PATHNAME', 'trace_build_index'
 LANGUAGE C STRICT;

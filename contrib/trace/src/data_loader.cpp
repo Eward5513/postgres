@@ -23,6 +23,7 @@ extern "C" {
 
 // Project headers
 #include "../include/data_loader.h"
+#include "../include/trace.h"
 #include "../include/parameter.h"
 #include "../include/mesh_connection_manager.h"
 #include "../include/octree_node_manager.h"
@@ -73,70 +74,41 @@ DataLoader::~DataLoader()
 /**
  * @brief Main entry point for data loading and processing pipeline
  * 
- * This is the primary public interface for the DataLoader class. It coordinates
- * the entire data loading pipeline including file discovery, binary file conversion,
- * and database storage using PostgreSQL COPY operations.
+ * This function processes the provided array of filenames to calculate
+ * spatial bounds for each file. The file discovery is handled externally,
+ * allowing for more flexible file management.
  * 
- * Processing pipeline:
- * 1. Discover and prepare .obj files from directory
- * 2. Concurrently convert each .obj file to binary format suitable for COPY operations
- * 3. Create point cloud data files in pc_data_for_copy directory
- * 4. Create mesh connection data files in mesh_data_for_copy directory  
- * 5. Use PostgreSQL COPY operations to load data into point_cloud and mesh tables
+ * @param filenames Vector of file paths to process
+ * @return SimpleBounds Overall bounds calculated from all processed files
  * 
- * @return vector<string> List of processed filenames for reference
- * 
- * @note Creates pc_data_for_copy and mesh_data_for_copy directories for binary files
  * @note Uses concurrent processing with std::thread for optimal performance
- * @throws May throw exceptions from underlying database operations or file I/O
+ * @throws May throw exceptions from file I/O operations
  */
-vector<string> DataLoader::load_data()
+SimpleBounds DataLoader::load_data(const std::vector<std::string>& filenames)
 {
-    elog(INFO, "DataLoader::load_data - Starting new implementation with concurrent .obj processing");
+    elog(INFO, "DataLoader::load_data - Processing %zu provided files", filenames.size());
     
-    // Step 1: Create output directories for binary files
-    std::string pc_data_dir = this->original_directory + "/pc_data_for_copy";
-    std::string mesh_data_dir = this->original_directory + "/mesh_data_for_copy";
+    // Create SimpleBounds array for each thread to work on
+    std::vector<SimpleBounds> file_bounds_array(filenames.size());
     
-    clear_folder(pc_data_dir);
-    clear_folder(mesh_data_dir);
-    
-    // Step 2: Discover .obj files in the directory
-    vector<string> obj_files;
-    for (const auto &entry : fs::directory_iterator(this->original_directory))
-    {
-        const auto &path = entry.path();
-        auto filename = path.filename().string();
-        if (filename.size() >= 4 && filename.substr(filename.size() - 4) == ".obj") {
-            obj_files.push_back(this->original_directory + "/" + filename);
-        }
-    }
-    
-    // Apply file limit if specified
-    if (this->max_file_num > 0 && obj_files.size() > this->max_file_num) {
-        obj_files.resize(this->max_file_num);
-    }
-    
-    elog(INFO, "Found %zu .obj files to process", obj_files.size());
-    
-    // Step 3: Concurrent processing of .obj files
+    // Concurrent processing of data files without locks
     std::vector<std::thread> worker_threads;
     std::atomic<int> processed_count(0);
-    std::mutex progress_mutex;
+    std::mutex progress_mutex;  // Only for logging progress
     
-    for (size_t i = 0; i < obj_files.size(); ++i) {
-        worker_threads.emplace_back([this, &obj_files, i, &processed_count, &progress_mutex, 
-                                   pc_data_dir, mesh_data_dir]() {
+    for (size_t i = 0; i < filenames.size(); ++i) {
+        worker_threads.emplace_back([this, &filenames, &file_bounds_array, i, &processed_count, &progress_mutex]() {
             try {
-                this->convert_obj_file_to_binary(obj_files[i], i, pc_data_dir, mesh_data_dir);
+                // Each thread modifies its own SimpleBounds reference
+                this->calculate_bound(filenames[i], file_bounds_array[i]);
                 
                 int current_count = ++processed_count;
                 std::lock_guard<std::mutex> lock(progress_mutex);
                 elog(INFO, "Processed file %zu/%zu: %s", 
-                     current_count, obj_files.size(), obj_files[i].c_str());
+                     current_count, filenames.size(), filenames[i].c_str());
             } catch (const std::exception& e) {
                 std::lock_guard<std::mutex> lock(progress_mutex);
-                elog(ERROR, "Failed to process file %s: %s", obj_files[i].c_str(), e.what());
+                elog(ERROR, "Failed to process file %s: %s", filenames[i].c_str(), e.what());
             }
         });
     }
@@ -148,68 +120,157 @@ vector<string> DataLoader::load_data()
     
     elog(INFO, "Completed concurrent processing of %d files", processed_count.load());
     
-    // Step 4: Use COPY operations to load data into database
-    this->load_binary_data_to_database(pc_data_dir, mesh_data_dir);
+    // Store filenames for internal reference
+    this->filenames = filenames;
     
-    // Store filenames for return
-    this->filenames = obj_files;
+    // Calculate final bounds by iterating through the SimpleBounds array
+    SimpleBounds final_bounds;
+    bool first_valid_bounds = true;
     
-    return filenames;
+    for (size_t i = 0; i < file_bounds_array.size(); ++i) {
+        const SimpleBounds& bounds = file_bounds_array[i];
+        
+        // Check if this file has valid bounds (non-zero values indicate valid data)
+        bool has_valid_bounds = (bounds.min_x != 0.0f || bounds.max_x != 0.0f || 
+                                bounds.min_y != 0.0f || bounds.max_y != 0.0f ||
+                                bounds.min_z != 0.0f || bounds.max_z != 0.0f);
+        
+        if (has_valid_bounds) {
+            if (first_valid_bounds) {
+                // Initialize final bounds with first valid file bounds
+                final_bounds = bounds;
+                first_valid_bounds = false;
+            } else {
+                // Update final bounds with this file's bounds
+                final_bounds.min_x = std::min(final_bounds.min_x, bounds.min_x);
+                final_bounds.min_y = std::min(final_bounds.min_y, bounds.min_y);
+                final_bounds.min_z = std::min(final_bounds.min_z, bounds.min_z);
+                final_bounds.min_time = std::min(final_bounds.min_time, bounds.min_time);
+                
+                final_bounds.max_x = std::max(final_bounds.max_x, bounds.max_x);
+                final_bounds.max_y = std::max(final_bounds.max_y, bounds.max_y);
+                final_bounds.max_z = std::max(final_bounds.max_z, bounds.max_z);
+                final_bounds.max_time = std::max(final_bounds.max_time, bounds.max_time);
+            }
+        }
+    }
+    
+    if (first_valid_bounds) {
+        elog(WARNING, "No valid boundary data found in any files");
+        return SimpleBounds();  // Return default bounds
+    }
+    
+    elog(INFO, "Final bounds: Longitude[%.6f-%.6f], Latitude[%.6f-%.6f], Altitude[%.3f-%.3f], Time[%.6f-%.6f]",
+         final_bounds.min_x, final_bounds.max_x,
+         final_bounds.min_y, final_bounds.max_y,
+         final_bounds.min_z, final_bounds.max_z,
+         final_bounds.min_time, final_bounds.max_time);
+    
+    return final_bounds;
 }
 
+
 /**
- * @brief Load and prepare data source files for processing
+ * @brief Calculate spatial bounds for a data file
  * 
- * This function scans the specified directory to collect all data files,
- * performs file sorting and shuffling operations, and limits the number
- * of files to process based on the max_file_num parameter.
+ * Reads the data file and calculates the minimum and maximum values for
+ * longitude, latitude, and altitude. Each line contains three space-separated
+ * numbers: longitude latitude altitude
  * 
- * Processing steps:
- * 1. Scan directory for all files
- * 2. Sort filenames alphabetically
- * 3. Shuffle filenames with a fixed seed for reproducibility
- * 4. Apply custom file sorting using FileSorter
- * 5. Limit the number of files if max_file_num is specified
- * 
- * @note Files are shuffled with seed 42 to ensure reproducible results
- * @note Supports .ply, .csv, and .obj file formats
+ * @param filename Path to the data file to process
+ * @param file_index Index of the file in the file_bounds array
  */
-void DataLoader::load_data_source_files()
+void DataLoader::calculate_bound(const std::string& filename, SimpleBounds& bounds)
 {
-    // int mesh_count = 0;
-    // int pointcloud_count = 0;
-    // int trajectory_count = 0;
-    vector<string> source_filenames;
-    for (const auto &entry : fs::directory_iterator(this->original_directory))
-    {
-        const auto &path = entry.path();
-        auto filename = path.filename().string();
-        source_filenames.push_back(this->original_directory + "/" + path.filename().string());
-        // if ((trajectory_count < 100 && filename.substr(filename.length() - 3) == "csv") ||
-        // (mesh_count < 100 && filename.substr(filename.length() - 3) == "obj") ||
-        // (pointcloud_count < 100 && filename.substr(filename.length() - 3) == "ply")){
-        //     if (filename.substr(filename.length() - 3) == "csv"){
-        //         ++trajectory_count;
-        //     }
-        //     else if (filename.substr(filename.length() - 3) == "obj"){
-        //         ++mesh_count;
-        //     }
-        //     else if (filename.substr(filename.length() - 3) == "ply"){
-        //         ++pointcloud_count;
-        //     }
-        //     filenames.push_back(sourceDir + "/" + filename);
-        // }
+    elog(INFO, "Calculating bounds for file: %s", filename.c_str());
+    
+    std::ifstream file(filename);
+    if (!file.is_open()) {
+        elog(ERROR, "Failed to open data file: %s", filename.c_str());
+        return;
     }
-    // sort(source_filenames.begin(),source_filenames.end());
-    // mt19937 g(42);
-    // shuffle(source_filenames.begin(), source_filenames.end(), g);
-    // elog(INFO, "sorting files");
-    FileSorter::sortFiles(source_filenames);
-    elog(INFO, "sorted files");
-    if(source_filenames.size() > this->max_file_num){
-        source_filenames.resize(this->max_file_num);
+    
+    std::string line;
+    bool first_point = true;
+    int line_count = 0;
+    int valid_points = 0;
+    
+    // Read data lines (no header)
+    while (std::getline(file, line)) {
+        line_count++;
+        
+        // Skip empty lines
+        if (line.empty()) continue;
+        
+        // Parse comma-separated line: longitude,latitude,altitude
+        std::stringstream ss(line);
+        std::vector<float> values;
+        std::string token;
+        
+        // Split by comma
+        while (std::getline(ss, token, ',')) {
+            try {
+                // Remove any leading/trailing whitespace
+                token.erase(0, token.find_first_not_of(" \t\r\n"));
+                token.erase(token.find_last_not_of(" \t\r\n") + 1);
+                
+                if (!token.empty()) {
+                    values.push_back(std::stof(token));
+                }
+            } catch (const std::exception& e) {
+                // Skip invalid tokens
+                continue;
+            }
+        }
+        
+        // Need exactly 3 values: longitude, latitude, altitude
+        if (values.size() != 3) {
+            elog(WARNING, "Invalid data format at line %d in file %s: expected 3 values, got %zu", 
+                 line_count, filename.c_str(), values.size());
+            continue;
+        }
+        
+        float longitude = values[0];  // x coordinate
+        float latitude = values[1];   // y coordinate
+        float altitude = values[2];   // z coordinate
+        float time = 0.0f;           // Default time value since not provided
+        
+        if (first_point) {
+            // Initialize bounds with first valid point
+            bounds.min_x = bounds.max_x = longitude;
+            bounds.min_y = bounds.max_y = latitude;
+            bounds.min_z = bounds.max_z = altitude;
+            bounds.min_time = bounds.max_time = time;
+            first_point = false;
+        } else {
+            // Update bounds
+            bounds.min_x = std::min(bounds.min_x, longitude);
+            bounds.min_y = std::min(bounds.min_y, latitude);
+            bounds.min_z = std::min(bounds.min_z, altitude);
+            bounds.min_time = std::min(bounds.min_time, time);
+            
+            bounds.max_x = std::max(bounds.max_x, longitude);
+            bounds.max_y = std::max(bounds.max_y, latitude);
+            bounds.max_z = std::max(bounds.max_z, altitude);
+            bounds.max_time = std::max(bounds.max_time, time);
+        }
+        
+        valid_points++;
     }
-    this->filenames = source_filenames;
+    
+    file.close();
+    
+    if (valid_points == 0) {
+        elog(WARNING, "No valid points found in file: %s", filename.c_str());
+        return;
+    }
+    
+    elog(INFO, "File %s bounds: Longitude[%.6f-%.6f], Latitude[%.6f-%.6f], Altitude[%.3f-%.3f], Points: %d",
+         filename.c_str(),
+         bounds.min_x, bounds.max_x,  // longitude range
+         bounds.min_y, bounds.max_y,  // latitude range
+         bounds.min_z, bounds.max_z,  // altitude range
+         valid_points);
 }
 
 /**
@@ -2519,358 +2580,4 @@ void DataLoader::chunk_original_data_to_db(DBOctreeNode leaf_node)
     
     elog(INFO, "chunk_original_data_to_db: Completed processing leaf node %d - stored %lld points across %zu KD-tree nodes", 
          leaf_node.id, in_this_file_read_count, to_db_data.size());
-}
-
-/**
- * @brief Process a single .obj file and convert to binary format suitable for PostgreSQL COPY
- * 
- * This function reads an .obj file and generates binary files for point cloud and mesh data.
- * Uses a clean design: read all data into containers first, then process them separately.
- * 
- * @param obj_filename Path to the input .obj file
- * @param file_id Unique identifier for this file
- * @param pc_data_dir Directory to store point cloud binary files
- * @param mesh_data_dir Directory to store mesh connection binary files
- */
-void DataLoader::convert_obj_file_to_binary(const std::string& obj_filename, size_t file_id,
-                                           const std::string& pc_data_dir, const std::string& mesh_data_dir)
-{
-    std::ifstream file(obj_filename);
-    if (!file.is_open()) {
-        throw std::runtime_error("Failed to open .obj file: " + obj_filename);
-    }
-    
-    // Containers to store parsed data
-    std::vector<std::array<float, 3>> vertex_data;  // x, y, z
-    std::vector<std::vector<int32_t>> face_data;    // vertex indices for each face
-    
-    // Read and parse all lines
-    std::string line;
-    while (std::getline(file, line)) {
-        std::stringstream ss(line);
-        std::string prefix;
-        ss >> prefix;
-        
-        if (prefix == "v") {
-            // Parse vertex: v x y z
-            float x, y, z;
-            ss >> x >> y >> z;
-            vertex_data.push_back({x, y, z});
-            
-        } else if (prefix == "f") {
-            // Parse face: f v1 v2 v3 ...
-            std::vector<int32_t> face_vertices;
-            int32_t vertex_idx;
-            while (ss >> vertex_idx) {
-                face_vertices.push_back(vertex_idx);
-            }
-            if (!face_vertices.empty()) {
-                face_data.push_back(std::move(face_vertices));
-            }
-        }
-    }
-    file.close();
-    
-    // Generate output filenames
-    std::string base_filename = std::filesystem::path(obj_filename).stem().string();
-    std::string pc_output_file = pc_data_dir + "/" + base_filename + ".bin";
-    std::string mesh_output_file = mesh_data_dir + "/" + base_filename + ".bin";
-    
-    // Process point cloud data if exists
-    if (!vertex_data.empty()) {
-        this->write_point_cloud_binary(pc_output_file, file_id, vertex_data);
-    }
-    
-    // Process mesh data if exists
-    if (!face_data.empty()) {
-        this->write_mesh_binary(mesh_output_file, file_id, face_data);
-    }
-    
-    // Log processing results
-    std::string log_message = "INFO: Processed " + obj_filename + ": " + 
-                             std::to_string(vertex_data.size()) + " vertices, " + 
-                             std::to_string(face_data.size()) + " faces";
-    if (!vertex_data.empty()) {
-        log_message += " -> " + pc_output_file;
-    }
-    if (!face_data.empty()) {
-        log_message += " -> " + mesh_output_file;
-    }
-    logger.log(log_message);
-}
-
-/**
- * @brief Load binary data files into database using PostgreSQL COPY operations
- * 
- * This function uses PostgreSQL COPY FROM STDIN operations to efficiently
- * load the binary data files generated by convert_obj_file_to_binary into
- * the point_cloud and mesh database tables.
- * 
- * @param pc_data_dir Directory containing point cloud binary files
- * @param mesh_data_dir Directory containing mesh connection binary files
- * 
- * @note Uses pgutils COPY operations for optimal bulk loading performance
- * @note All binary files in the directories are processed
- * @note Excludes auto-generated id columns from COPY operations
- */
-void DataLoader::load_binary_data_to_database(const std::string& pc_data_dir, const std::string& mesh_data_dir)
-{
-    elog(INFO, "Loading binary data to database using COPY operations");
-    
-    // Process all point cloud binary files
-    if (std::filesystem::exists(pc_data_dir)) {
-        for (const auto& entry : std::filesystem::directory_iterator(pc_data_dir)) {
-            if (entry.path().extension() == ".bin") {
-                std::string filepath = entry.path().string();
-                elog(INFO, "Loading point cloud data from: %s", filepath.c_str());
-                
-                std::string sql = "COPY point_cloud (file_id, vertex_id, x, y, z) "
-                                 "FROM '" + filepath + "' WITH (FORMAT BINARY)";
-                pgutils.executeSQL(sql.c_str());
-            }
-        }
-    } else {
-        elog(INFO, "Point cloud data directory does not exist: %s", pc_data_dir.c_str());
-    }
-    
-    // Process all mesh binary files
-    if (std::filesystem::exists(mesh_data_dir)) {
-        for (const auto& entry : std::filesystem::directory_iterator(mesh_data_dir)) {
-            if (entry.path().extension() == ".bin") {
-                std::string filepath = entry.path().string();
-                elog(INFO, "Loading mesh data from: %s", filepath.c_str());
-                
-                std::string sql = "COPY mesh (file_id, face_id, vertex_count, vertex_indices) "
-                                 "FROM '" + filepath + "' WITH (FORMAT BINARY)";
-                pgutils.executeSQL(sql.c_str());
-            }
-        }
-    } else {
-        elog(INFO, "Mesh data directory does not exist: %s", mesh_data_dir.c_str());
-    }
-    
-    elog(INFO, "Completed loading binary data to database");
-}
-
-/**
- * @brief Write point cloud data to PostgreSQL COPY BINARY format file
- * 
- * @param output_file Path to output binary file
- * @param file_id File identifier
- * @param vertex_data Vector of vertex data (x, y, z, r, g, b)
- */
-void DataLoader::write_point_cloud_binary(const std::string& output_file, size_t file_id, 
-                                 const std::vector<std::array<float, 3>>& vertex_data)
-{
-    std::ofstream file(output_file, std::ios::binary);
-    if (!file.is_open()) {
-        throw std::runtime_error("Failed to create point cloud binary file: " + output_file);
-    }
-    
-    // Helper lambda for network byte order conversion
-    auto htonl_func = [](uint32_t hostlong) -> uint32_t { return htonl(hostlong); };
-    auto htons_func = [](uint16_t hostshort) -> uint16_t { return htons(hostshort); };
-    
-    // Write PostgreSQL COPY BINARY header
-    const char pg_signature[] = "PGCOPY\n\377\r\n\0";
-    file.write(pg_signature, 11);
-    
-    uint32_t flags = htonl_func(0);
-    file.write(reinterpret_cast<const char*>(&flags), sizeof(uint32_t));
-    
-    uint32_t header_ext_len = htonl_func(0);
-    file.write(reinterpret_cast<const char*>(&header_ext_len), sizeof(uint32_t));
-    
-    // Write each vertex record
-    for (size_t i = 0; i < vertex_data.size(); ++i) {
-        const auto& vertex = vertex_data[i];
-        
-        // Number of fields (5 fields: file_id, vertex_id, x, y, z)
-        uint16_t field_count = htons_func(5);
-        file.write(reinterpret_cast<const char*>(&field_count), sizeof(uint16_t));
-        
-        // Field 1: file_id
-        uint32_t field_len = htonl_func(sizeof(int32_t));
-        int32_t file_id_net = htonl_func(static_cast<int32_t>(file_id));
-        file.write(reinterpret_cast<const char*>(&field_len), sizeof(uint32_t));
-        file.write(reinterpret_cast<const char*>(&file_id_net), sizeof(int32_t));
-        
-        // Field 2: vertex_id
-        int32_t vertex_id_net = htonl_func(static_cast<int32_t>(i + 1));
-        file.write(reinterpret_cast<const char*>(&field_len), sizeof(uint32_t));
-        file.write(reinterpret_cast<const char*>(&vertex_id_net), sizeof(int32_t));
-        
-        // Fields 3-5: x, y, z coordinates
-        for (int coord_idx = 0; coord_idx < 3; ++coord_idx) {
-            uint32_t coord_net;
-            memcpy(&coord_net, &vertex[coord_idx], sizeof(float));
-            coord_net = htonl_func(coord_net);
-            file.write(reinterpret_cast<const char*>(&field_len), sizeof(uint32_t));
-            file.write(reinterpret_cast<const char*>(&coord_net), sizeof(float));
-        }
-    }
-    
-    // Write trailer
-    int16_t trailer = htons_func(-1);
-    file.write(reinterpret_cast<const char*>(&trailer), sizeof(int16_t));
-    
-    file.close();
-}
-
-/**
- * @brief Write mesh data to PostgreSQL COPY BINARY format file
- * 
- * This function generates a binary file compatible with PostgreSQL's COPY FROM BINARY command.
- * The binary format follows PostgreSQL's wire protocol specification for COPY operations.
- * 
- * PostgreSQL COPY BINARY Format Structure:
- * ========================================
- * 
- * 1. File Header (19 bytes total):
- *    - Signature (11 bytes): "PGCOPY\n\377\r\n\0" - identifies the file as PostgreSQL binary format
- *    - Flags (4 bytes): 32-bit integer, currently 0 (network byte order)
- *    - Header extension length (4 bytes): 32-bit integer, currently 0 (network byte order)
- * 
- * 2. Tuple Data (repeated for each row):
- *    - Field count (2 bytes): 16-bit integer, number of columns (network byte order)
- *    - For each field:
- *      - Field length (4 bytes): 32-bit integer, -1 for NULL, otherwise byte length (network byte order)
- *      - Field data (variable): actual field data in appropriate format
- * 
- * 3. File Trailer (2 bytes):
- *    - Trailer marker (2 bytes): 16-bit integer value -1 (0xFFFF in network byte order)
- * 
- * Our Mesh Table Schema:
- * =====================
- * - file_id (int4): File identifier
- * - face_id (int4): Face identifier (1-indexed)
- * - vertex_count (int4): Number of vertices in the face
- * - vertex_indices (int4[]): Array of vertex indices
- * 
- * PostgreSQL Array Binary Format (for vertex_indices field):
- * =========================================================
- * Arrays in PostgreSQL binary format according to official specification:
- * 
- * 1. Array Header (12 bytes):
- *    - ndim (4 bytes): Number of dimensions, 1 for simple arrays (network byte order)
- *    - has_nulls (4 bytes): 1 if array has NULL, 0 otherwise (network byte order)
- *    - element_type (4 bytes): Element type OID, 23 for int4 (network byte order)
- * 
- * 2. Dimension Info (8 bytes per dimension):
- *    - dims[i] (4 bytes): Number of elements in dimension i (network byte order)
- *    - lbound[i] (4 bytes): Lower bound of dimension i, typically 1 (network byte order)
- * 
- * 3. Element Data (variable per element):
- *    - element_length (4 bytes): Length of element in bytes (network byte order)
- *    - element_data (4 bytes): The actual int4 element (network byte order)
- * 
- * Network Byte Order:
- * ==================
- * All multi-byte integers must be in network byte order (big-endian).
- * Use htonl() for 32-bit integers and htons() for 16-bit integers.
- * 
- * @param output_file Path to output binary file
- * @param file_id File identifier
- * @param face_data Vector of face data (each face is a vector of vertex indices)
- */
-void DataLoader::write_mesh_binary(const std::string& output_file, size_t file_id, 
-                                  const std::vector<std::vector<int32_t>>& face_data)
-{
-    std::ofstream file(output_file, std::ios::binary);
-    if (!file.is_open()) {
-        throw std::runtime_error("Failed to create mesh binary file: " + output_file);
-    }
-    
-    // Helper lambda for network byte order conversion
-    auto htonl_func = [](uint32_t hostlong) -> uint32_t { return htonl(hostlong); };
-    auto htons_func = [](uint16_t hostshort) -> uint16_t { return htons(hostshort); };
-    
-    // Write PostgreSQL COPY BINARY format header
-    // Signature: PGCOPY\n\377\r\n\0
-    const char signature[11] = {'P', 'G', 'C', 'O', 'P', 'Y', '\n', '\377', '\r', '\n', '\0'};
-    file.write(signature, 11);
-    
-    // Flags field (32-bit integer): 0 for no special flags
-    uint32_t flags = htonl_func(0);
-    file.write(reinterpret_cast<const char*>(&flags), 4);
-    
-    // Header extension area length: 0
-    uint32_t header_ext_len = htonl_func(0);
-    file.write(reinterpret_cast<const char*>(&header_ext_len), 4);
-    
-    // Process each face - use actual face data
-    for (size_t face_id = 0; face_id < face_data.size(); ++face_id) {
-        const auto& face = face_data[face_id];
-        
-        // Number of fields in the tuple: 4 (file_id, face_id, vertex_count, vertex_indices)
-        uint16_t field_count = htons_func(4);
-        file.write(reinterpret_cast<const char*>(&field_count), 2);
-        
-        // Field 1: file_id (int4)
-        uint32_t file_id_len = htonl_func(4);
-        file.write(reinterpret_cast<const char*>(&file_id_len), 4);
-        uint32_t file_id_be = htonl_func(static_cast<uint32_t>(file_id));
-        file.write(reinterpret_cast<const char*>(&file_id_be), 4);
-        
-        // Field 2: face_id (int4)
-        uint32_t face_id_len = htonl_func(4);
-        file.write(reinterpret_cast<const char*>(&face_id_len), 4);
-        uint32_t face_id_be = htonl_func(static_cast<uint32_t>(face_id + 1)); // 1-indexed
-        file.write(reinterpret_cast<const char*>(&face_id_be), 4);
-        
-        // Field 3: vertex_count (int4)
-        uint32_t vertex_count_len = htonl_func(4);
-        file.write(reinterpret_cast<const char*>(&vertex_count_len), 4);
-        uint32_t vertex_count_be = htonl_func(static_cast<uint32_t>(face.size()));
-        file.write(reinterpret_cast<const char*>(&vertex_count_be), 4);
-        
-        // Field 4: vertex_indices (int4[]) - PostgreSQL array format
-        size_t num_elements = face.size();
-        
-        // Calculate array size:
-        // Array Header: ndim(4) + has_nulls(4) + element_type(4) = 12 bytes
-        // Dimension Info: dims(4) + lbound(4) = 8 bytes for 1D
-        // Element Data: (element_length(4) + element_data(4)) * num_elements
-        size_t array_header_size = 12;
-        size_t array_dim_size = 8;
-        size_t array_data_size = num_elements * 8; // 4 bytes length + 4 bytes data per element
-        size_t total_array_size = array_header_size + array_dim_size + array_data_size;
-        
-        uint32_t array_field_len = htonl_func(static_cast<uint32_t>(total_array_size));
-        file.write(reinterpret_cast<const char*>(&array_field_len), 4);
-        
-        // Array Header (12 bytes)
-        uint32_t ndim = htonl_func(1);  // 1 dimension
-        file.write(reinterpret_cast<const char*>(&ndim), 4);
-        
-        uint32_t has_nulls = htonl_func(0);  // no NULLs
-        file.write(reinterpret_cast<const char*>(&has_nulls), 4);
-        
-        uint32_t element_type = htonl_func(23);  // int4 OID
-        file.write(reinterpret_cast<const char*>(&element_type), 4);
-        
-        // Dimension Info (8 bytes for 1D array)
-        uint32_t dim_size = htonl_func(static_cast<uint32_t>(num_elements));
-        file.write(reinterpret_cast<const char*>(&dim_size), 4);
-        
-        uint32_t lower_bound = htonl_func(1);  // 1-indexed
-        file.write(reinterpret_cast<const char*>(&lower_bound), 4);
-        
-        // Element Data - write each element with its length prefix
-        for (size_t i = 0; i < num_elements; ++i) {
-            // Element length (4 bytes for int4)
-            uint32_t element_len = htonl_func(4);
-            file.write(reinterpret_cast<const char*>(&element_len), 4);
-            
-            // Element data (int4 in network byte order)
-            uint32_t element_val = htonl_func(static_cast<uint32_t>(face[i]));
-            file.write(reinterpret_cast<const char*>(&element_val), 4);
-        }
-    }
-    
-    // Write trailer: -1 as 16-bit integer
-    uint16_t trailer = htons_func(0xFFFF);
-    file.write(reinterpret_cast<const char*>(&trailer), 2);
-    
-    file.close();
 }

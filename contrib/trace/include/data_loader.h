@@ -11,6 +11,7 @@
 #include <thread>
 #include "utils.h"
 #include "spatiotemporal_data.h"
+#include "trace.h"
 
 // Add using declarations for commonly used types
 using std::vector;
@@ -37,13 +38,16 @@ class DataLoader{
     public:
     DataLoader(const std::string& directory, int max_file_num, float sample_ratio);
     ~DataLoader();
-    std::vector<std::string> load_data();
+    SimpleBounds load_data(const std::vector<std::string>& filenames);
+    
+    // Note: Individual file bounds and overall bounds are now calculated locally in load_data()
+    // No longer need global state variables for bounds management
 
     private:
-    // Core pipeline functions (ordered by call sequence)
-    void load_data_source_files();
+    // Core pipeline functions (implemented)
     void build_index();
     void para_bound_and_sample();
+    void calculate_bound(const std::string& filename, SimpleBounds& bounds);  // New function for boundary calculation
     SampleResult calculate_bound_and_sampleing(const std::string& filename, int32_t fid, int16_t user_id);
     void para_sort_sample_file(const Bounds& bounds);
     void sort_sample_file(const std::string& filename, const Bounds& bounds, std::vector<uint32_t>& sampleCells);
@@ -55,24 +59,12 @@ class DataLoader{
     // Indexing and tree construction functions
     OctreeNode* building_octree_bottom_up_top_down(const Bounds& bounds);
     void split_data(int id, std::vector<struct DBOctreeNode>& nodes, std::vector<struct SpatioTemporalData>& data, std::unordered_map<int, std::vector<struct SpatioTemporalData>>& result);
-    // void chunk_original_data_to_db(int chunk_id, std::vector<struct SpatioTemporalData> all_data);
     void chunk_original_data_to_db(struct DBOctreeNode leaf_node);
     void split_data_to_db1(std::vector<struct DBOctreeNode>&);
     
     // Helper functions for split_data_to_db1
     void sort_original_file_by_octree(const std::string& filename, class OctreePointQuery& query_utils, std::unordered_map<int,std::unordered_map<int,std::int64_t>>& block_size, std::mutex& mutex);
     void para_sort_original_file_by_octree(const std::vector<std::string>& filenames, class OctreePointQuery& query_utils, std::unordered_map<int,std::unordered_map<int,std::int64_t>>& block_size);
-    
-    // New functions for obj file processing and copy operations
-    void convert_obj_file_to_binary(const std::string& obj_filename, size_t file_id, 
-                                   const std::string& pc_data_dir, const std::string& mesh_data_dir);
-    void load_binary_data_to_database(const std::string& pc_data_dir, const std::string& mesh_data_dir);
-    
-    // Helper functions for binary data writing
-    void write_point_cloud_binary(const std::string& output_file, size_t file_id, 
-                                 const std::vector<std::array<float, 3>>& vertex_data);
-    void write_mesh_binary(const std::string& output_file, size_t file_id, 
-                          const std::vector<std::vector<int32_t>>& face_data);
     
     // Member variables
     std::string original_directory;
@@ -121,8 +113,5 @@ private:
     void para_createTreeWithLeafNode(int chunk_id, const std::vector<struct SpatioTemporalData>& dataPoints, const std::vector<OctreeNode*>& leafVector);
     void buildKdTreeForLeafNode(const OctreeNode* node, const std::vector<struct SpatioTemporalData>& dataPoints, int chunk_id);
 };
-
-// Global function declarations
-void chunk_original_data_to_db(int chunk_id, std::vector<SpatioTemporalData> all_data);
 
 #endif // TRACE_DATA_LOADER_H

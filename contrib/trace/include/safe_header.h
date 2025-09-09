@@ -11,6 +11,7 @@ extern "C" {
 #include "utils/memutils.h"
 #include "utils/lsyscache.h"
 #include "utils/elog.h"
+#include "utils/guc.h"
 #include "catalog/pg_type.h"
 #include "executor/spi.h"
 #include "access/htup_details.h"
