@@ -178,6 +178,52 @@ SPITupleTable* PostgreSQLUtils::executeSQLSelect(const char* sql) {
     return result;
 }
 
+SPITupleTable* PostgreSQLUtils::selectBucketsIntersecting(const char* dataset_path,
+                                            float minx,float miny,float minz,
+                                            float maxx,float maxy,float maxz)
+{
+    if (SPI_connect() != SPI_OK_CONNECT) {
+        ereport(ERROR, (errcode(ERRCODE_INTERNAL_ERROR), errmsg("could not connect to SPI")));
+    }
+    StringInfoData buf; initStringInfo(&buf);
+    appendStringInfo(&buf,
+        "SELECT file_path, bx,by,bz, level, leaf_prefix, leaf_level, offset, count, minx,miny,minz,maxx,maxy,maxz "
+        "FROM tsdmp_leaf_bucket WHERE dataset_path=%s AND "
+        "maxx >= %f AND minx <= %f AND maxy >= %f AND miny <= %f AND maxz >= %f AND minz <= %f",
+        quote_literal_cstr(dataset_path), minx, maxx, miny, maxy, minz, maxz);
+    int ret = SPI_exec(buf.data, 0);
+    if (ret != SPI_OK_SELECT) {
+        pfree(buf.data); SPI_finish();
+        ereport(ERROR, (errcode(ERRCODE_INTERNAL_ERROR), errmsg("SPI_exec failed for selectBucketsIntersecting")));
+    }
+    SPITupleTable* result = NULL;
+    if (SPI_tuptable) {
+        result = SPI_tuptable; // Caller will read before SPI_finish(); copy if needed by caller
+    }
+    pfree(buf.data);
+    return result;
+}
+
+SPITupleTable* PostgreSQLUtils::selectAllKdLeaves(const char* dataset_path)
+{
+    if (SPI_connect() != SPI_OK_CONNECT) {
+        ereport(ERROR, (errcode(ERRCODE_INTERNAL_ERROR), errmsg("could not connect to SPI")));
+    }
+    StringInfoData buf; initStringInfo(&buf);
+    appendStringInfo(&buf,
+        "SELECT file_path, bx,by,bz, leaf_prefix, leaf_level, offset, count, minx,miny,minz,maxx,maxy,maxz FROM tsdmp_bucket_kdleaf WHERE dataset_path=%s",
+        quote_literal_cstr(dataset_path));
+    int ret = SPI_exec(buf.data, 0);
+    if (ret != SPI_OK_SELECT) {
+        pfree(buf.data); SPI_finish();
+        ereport(ERROR, (errcode(ERRCODE_INTERNAL_ERROR), errmsg("SPI_exec failed for selectAllKdLeaves")));
+    }
+    SPITupleTable* result = NULL;
+    if (SPI_tuptable) { result = SPI_tuptable; }
+    pfree(buf.data);
+    return result;
+}
+
 // ============================================================================
 // BINARY DATA OPERATIONS (SINGLE KEY)
 // ============================================================================

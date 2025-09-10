@@ -72,6 +72,12 @@ public:
      * @return SPITupleTable* query result table
      */
     SPITupleTable* executeSQLSelect(const char* sql);
+
+    // Index query helpers
+    SPITupleTable* selectBucketsIntersecting(const char* dataset_path,
+                                            float minx,float miny,float minz,
+                                            float maxx,float maxy,float maxz);
+    SPITupleTable* selectAllKdLeaves(const char* dataset_path);
     
     /**
      * @brief Insert binary data

@@ -11,10 +11,6 @@ PG_FUNCTION_INFO_V1(trace_load_data);
 PG_FUNCTION_INFO_V1(trace_build_index);
 PG_FUNCTION_INFO_V1(trace_range_query);
 PG_FUNCTION_INFO_V1(trace_knn_query);
-PG_FUNCTION_INFO_V1(trace_clear_data);
-PG_FUNCTION_INFO_V1(trace_get_stats);
-PG_FUNCTION_INFO_V1(trace_set_config);
-PG_FUNCTION_INFO_V1(trace_get_config);
 }
 
 #include "../include/trace.h"
@@ -496,96 +492,3 @@ trace_knn_query(PG_FUNCTION_ARGS)
     MemoryContextSwitchTo(old_context);
     PG_RETURN_NULL();
 }
-
-// Configuration functions
-extern "C" Datum
-trace_set_config(PG_FUNCTION_ARGS)
-{
-    text *key_text = PG_GETARG_TEXT_PP(0);
-    text *value_text = PG_GETARG_TEXT_PP(1);
-    
-    char *key = text_to_cstring(key_text);
-    char *value = text_to_cstring(value_text);
-    
-    try {
-        trace_set_config_impl(std::string(key), std::string(value));
-        elog(INFO, "Set config: %s = %s", key, value);
-        PG_RETURN_BOOL(true);
-    } catch (const std::exception& e) {
-        ereport(ERROR,
-                (errcode(ERRCODE_INTERNAL_ERROR),
-                 errmsg("error setting config: %s", e.what())));
-    }
-    
-    PG_RETURN_BOOL(false);
-}
-
-extern "C" Datum
-trace_get_config(PG_FUNCTION_ARGS)
-{
-    text *key_text = PG_GETARG_TEXT_PP(0);
-    char *key = text_to_cstring(key_text);
-    
-    try {
-        std::string value = trace_get_config_impl(std::string(key));
-        PG_RETURN_TEXT_P(cstring_to_text(value.c_str()));
-    } catch (const std::exception& e) {
-        ereport(ERROR,
-                (errcode(ERRCODE_INTERNAL_ERROR),
-                 errmsg("error getting config: %s", e.what())));
-    }
-    
-    PG_RETURN_NULL();
-}
-
-// Clear data function
-extern "C" Datum
-trace_clear_data(PG_FUNCTION_ARGS)
-{
-    try {
-        bool success = trace_clear_data_impl();
-        elog(INFO, "Data cleared successfully");
-        PG_RETURN_BOOL(success);
-    } catch (const std::exception& e) {
-        ereport(ERROR,
-                (errcode(ERRCODE_INTERNAL_ERROR),
-                 errmsg("error clearing data: %s", e.what())));
-    }
-    
-    PG_RETURN_BOOL(false);
-}
-
-// Statistics function
-extern "C" Datum
-trace_get_stats(PG_FUNCTION_ARGS)
-{
-    try {
-        // Call main implementation
-        StatsResult stats = trace_get_stats_impl();
-        
-        // Create return tuple
-        TupleDesc tupdesc;
-        Datum values[4];
-        bool nulls[4] = {false, false, false, false};
-        
-        if (get_call_result_type(fcinfo, NULL, &tupdesc) != TYPEFUNC_COMPOSITE)
-            ereport(ERROR,
-                    (errcode(ERRCODE_FEATURE_NOT_SUPPORTED),
-                     errmsg("function returning record called in context that cannot accept a record")));
-        
-        values[0] = Int32GetDatum(stats.total_files);
-        values[1] = Int64GetDatum(stats.total_points);
-        values[2] = Int32GetDatum(stats.total_chunks);
-        values[3] = Float4GetDatum(stats.index_size_mb);
-        
-        HeapTuple result_tuple = heap_form_tuple(tupdesc, values, nulls);
-        PG_RETURN_DATUM(HeapTupleGetDatum(result_tuple));
-        
-    } catch (const std::exception& e) {
-        ereport(ERROR,
-                (errcode(ERRCODE_INTERNAL_ERROR),
-                 errmsg("error getting statistics: %s", e.what())));
-    }
-    
-    PG_RETURN_NULL();
-} 

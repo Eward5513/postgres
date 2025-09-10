@@ -8,6 +8,12 @@
 #include <fstream>
 #include <vector>
 #include <string>
+#include <algorithm>
+#include <queue>
+#include <cstdint>
+#include <limits>
+#include <system_error>
+#include <cstdlib>
 
 // 第三方库
 #include "nlohmann/json.hpp"
@@ -17,6 +23,9 @@
 #include "../include/parameter.h"
 #include "../include/data_loader.h"
 #include "../include/pgutils.h"
+#include "../include/index_storage.h"
+#include "../include/index_builder.h"
+#include "../include/morton_utils.h"
 
 namespace fs = std::filesystem;
 
@@ -30,87 +39,21 @@ SimpleBounds global_bounds;
 std::vector<std::string> data_source_files;
 std::map<std::string, std::string> config_map;
 
+
+// Morton 辅助函数改为独立文件 morton_utils.{h,cpp}
+
+// 持久化在 index_storage.cpp 中实现
+
+// LeafMeta 结构体已在 index_storage.h 中定义
+
+// DB/磁盘辅助函数在 index_storage.{h,cpp}
+
+//
+
+
 namespace trace {
 
-// Configuration management
-void load_config()
-{
-    // TODO: Implement configuration loading
-    config_map["version"] = "1.0.0";
-    config_map["status"] = "loaded";
-}
 
-void save_config()
-{
-    // TODO: Implement configuration saving
-}
-
-std::string get_config_value(const std::string& key)
-{
-    auto it = config_map.find(key);
-    if (it != config_map.end()) {
-        return it->second;
-    }
-    return "";
-}
-
-void set_config_value(const std::string& key, const std::string& value)
-{
-    config_map[key] = value;
-}
-
-// Type conversion utilities
-Oid get_type_oid(const char* type_name)
-{
-    // TODO: Implement type OID lookup
-    return InvalidOid;
-}
-
-TupleDesc trace_TypeGetTupleDesc(Oid type_oid, List* coldeflist)
-{
-    // TODO: Implement tuple descriptor creation
-    return NULL;
-}
-
-// Error handling
-void trace_error(const char* fmt, ...)
-{
-    va_list args;
-    va_start(args, fmt);
-    
-    char buffer[1024];
-    vsnprintf(buffer, sizeof(buffer), fmt, args);
-    
-    va_end(args);
-    
-    ereport(ERROR, (errcode(ERRCODE_INTERNAL_ERROR), errmsg("%s", buffer)));
-}
-
-void trace_warning(const char* fmt, ...)
-{
-    va_list args;
-    va_start(args, fmt);
-    
-    char buffer[1024];
-    vsnprintf(buffer, sizeof(buffer), fmt, args);
-    
-    va_end(args);
-    
-    ereport(WARNING, (errmsg("%s", buffer)));
-}
-
-void trace_info(const char* fmt, ...)
-{
-    va_list args;
-    va_start(args, fmt);
-    
-    char buffer[1024];
-    vsnprintf(buffer, sizeof(buffer), fmt, args);
-    
-    va_end(args);
-    
-    ereport(INFO, (errmsg("%s", buffer)));
-}
 
 // Type conversion functions
 SimpleBounds bounds_from_pg_args(float min_x, float min_y, float min_z, 
@@ -319,6 +262,8 @@ LoadResult trace_load_data_impl(const std::string& directory,
     // 设置全局边界（使用计算出的边界）
     global_bounds = SimpleBounds(result.min_x, result.min_y, result.min_z, result.min_time,
                                 result.max_x, result.max_y, result.max_z, result.max_time);
+    // 记录数据集路径到配置，供持久化索引使用
+    config_map["dataset_path"] = directory;
     
     elog(INFO, "Loaded %d files from directory '%s' with %ld total points, "
               "bounds: Longitude[%.6f-%.6f], Latitude[%.6f-%.6f], Altitude[%.3f-%.3f], "
@@ -346,15 +291,16 @@ IndexResult trace_build_index_impl(int chunk_max_level_param, int octree_max_lev
     config_map["octree_max_level"] = std::to_string(octree_max_level_param);
     config_map["max_point_per_leaf"] = std::to_string(max_point_per_leaf_param);
     
-    // Simulate index building
-    result.index_build_time = 2.5; // Dummy time
-    result.chunk_count = data_source_files.size();
-    result.total_octree_nodes = 1000; // Dummy count
-    result.total_kdtree_nodes = 500; // Dummy count
-    
-    elog(INFO, "Built index with %d chunks, %d octree nodes, %d kdtree nodes in %.2f seconds",
-         result.chunk_count, result.total_octree_nodes, 
-         result.total_kdtree_nodes, result.index_build_time);
+    // 使用 IndexBuilder 完成构建与持久化
+    auto build_start = std::chrono::high_resolution_clock::now();
+    IndexBuilder::Params p{ octree_max_level_param, max_point_per_leaf_param, 8192, 6, 4096 };
+    IndexBuilder builder(config_map["dataset_path"], global_bounds, data_source_files, p);
+    builder.build_all();
+    auto build_end = std::chrono::high_resolution_clock::now();
+    result.index_build_time = std::chrono::duration<float>(build_end - build_start).count();
+    result.chunk_count = (int)data_source_files.size();
+    result.total_octree_nodes = 0;
+    result.total_kdtree_nodes = 0;
     
     return result;
 }
@@ -364,26 +310,11 @@ std::vector<SimplePoint> trace_range_query_impl(const SimpleBounds& bounds, int 
 {
     std::vector<SimplePoint> results;
     
-    // TODO: Implement actual range query logic
-    // For now, just return some dummy points within bounds
-    
-    elog(DEBUG1, "Performing range query: bounds(%.2f,%.2f,%.2f,%.2f) to (%.2f,%.2f,%.2f,%.2f), type_mask=%d",
-         bounds.min_x, bounds.min_y, bounds.min_z, bounds.min_time,
-         bounds.max_x, bounds.max_y, bounds.max_z, bounds.max_time, data_type_mask);
-    
-    // Generate some dummy results
-    for (int i = 0; i < 5; i++) {
-        SimplePoint point;
-        point.x = bounds.min_x + (bounds.max_x - bounds.min_x) * 0.5f;
-        point.y = bounds.min_y + (bounds.max_y - bounds.min_y) * 0.5f;
-        point.z = bounds.min_z + (bounds.max_z - bounds.min_z) * 0.5f;
-        point.time = bounds.min_time + (bounds.max_time - bounds.min_time) * 0.5f;
-        point.data_type = data_type_mask & TRACE_TYPE_POINTCLOUD;
-        point.fid = i;
-        point.pid = i * 100;
-        point.foreign_key = i;
-        
-        results.push_back(point);
+    // 使用桶（叶内 octree）粗筛，直接按 bucket 偏移读取
+    const std::string dataset_path = config_map["dataset_path"];
+    auto buckets = db_query_buckets_intersecting(dataset_path, bounds);
+    for (const auto &bmeta : buckets) {
+        read_points_block_filter_bounds(bmeta.file_path, bmeta.offset, bmeta.count, bounds, data_type_mask, results);
     }
     
     return results;
@@ -396,91 +327,43 @@ std::vector<std::pair<SimplePoint, float>> trace_knn_query_impl(const SimplePoin
 {
     std::vector<std::pair<SimplePoint, float>> results;
     
-    // TODO: Implement actual kNN query logic
-    // For now, just return some dummy nearest neighbors
-    
-    elog(DEBUG1, "Performing kNN query: center(%.2f,%.2f,%.2f,%.2f), k=%d, time(%.2f,%.2f), type_mask=%d",
-         center.x, center.y, center.z, center.time, k, min_time, max_time, data_type_mask);
-    
-    // Generate k dummy results at increasing distances
-    for (int i = 0; i < k && i < 10; i++) {
-        SimplePoint point;
-        point.x = center.x + i * 0.1f;
-        point.y = center.y + i * 0.1f;
-        point.z = center.z + i * 0.1f;
-        point.time = (min_time + max_time) * 0.5f;
-        point.data_type = data_type_mask & TRACE_TYPE_POINTCLOUD;
-        point.fid = i;
-        point.pid = i * 100;
-        point.foreign_key = i;
-        
-        float distance = i * 0.1f * sqrt(3); // Distance from center
-        
-        results.push_back(std::make_pair(point, distance));
+    if (k <= 0) return results;
+    if ((data_type_mask & TRACE_TYPE_POINTCLOUD) == 0) return results;
+
+    // 使用 kd 叶（桶内二分）的包围盒做粗序，从近到远读取块更新堆
+    const std::string dataset_path = config_map["dataset_path"];
+    auto kdleaves = db_query_all_kdleaves(dataset_path);
+    std::vector<std::pair<float,size_t>> order;
+    order.reserve(kdleaves.size());
+    for (size_t i=0;i<kdleaves.size();++i) {
+        const auto &m = kdleaves[i];
+        // 用 kd 叶 bbox 到点的最小距离
+        float dx=0,dy=0,dz=0; if (center.x<m.minx) dx=m.minx-center.x; else if (center.x>m.maxx) dx=center.x-m.maxx;
+        if (center.y<m.miny) dy=m.miny-center.y; else if (center.y>m.maxy) dy=center.y-m.maxy;
+        if (center.z<m.minz) dz=m.minz-center.z; else if (center.z>m.maxz) dz=center.z-m.maxz;
+        float d2 = dx*dx+dy*dy+dz*dz;
+        order.emplace_back(d2, i);
+    }
+    std::sort(order.begin(), order.end(), [](auto &a, auto &b){ return a.first < b.first; });
+
+    std::priority_queue<std::pair<float,KnnCand>> heap;
+    for (auto &pr : order) {
+        if ((int)heap.size() >= k && pr.first > heap.top().first) break; // 剪枝
+        const auto &m = kdleaves[pr.second];
+        read_points_block_update_knn(m.file_path, m.offset, m.count, center, k, heap);
+    }
+
+    // 输出前 k 个
+    std::vector<std::pair<float,KnnCand>> tmp;
+    while (!heap.empty()) { tmp.push_back(heap.top()); heap.pop(); }
+    std::sort(tmp.begin(), tmp.end(), [](auto &a, auto &b){ return a.first < b.first; });
+    size_t take = std::min((size_t)k, tmp.size());
+    results.reserve(take);
+    for (size_t i=0;i<take;++i) {
+        const KnnCand &c = tmp[i].second; float d = std::sqrt(tmp[i].first);
+        SimplePoint p{}; p.x=c.x; p.y=c.y; p.z=c.z; p.time=0.0f; p.data_type=TRACE_TYPE_POINTCLOUD; p.fid=(int)c.fid; p.pid=(int)c.row; p.foreign_key=0;
+        results.emplace_back(p, d);
     }
     
     return results;
 }
-
-// Configuration management implementations
-void trace_set_config_impl(const std::string& key, const std::string& value)
-{
-    // config_map[key] = value;
-    elog(DEBUG1, "Config set: %s = %s", key.c_str(), value.c_str());
-}
-
-std::string trace_get_config_impl(const std::string& key)
-{
-    auto it = config_map.find(key);
-    if (it != config_map.end()) {
-        return it->second;
-    }
-    return "";
-}
-
-// Data clearing implementation
-bool trace_clear_data_impl()
-{
-    // Clear all data structures
-    data_source_files.clear();
-    global_bounds = SimpleBounds();
-    
-    // Clear some config but keep version info
-    std::string version = config_map["version"];
-    config_map.clear();
-    config_map["version"] = version;
-    config_map["status"] = "cleared";
-    
-    elog(INFO, "All data structures cleared");
-    return true;
-}
-
-// Statistics implementation
-StatsResult trace_get_stats_impl()
-{
-    StatsResult stats;
-    
-    stats.total_files = data_source_files.size();
-    stats.total_points = 0;
-    stats.total_chunks = 0;
-    stats.index_size_mb = 0.0f;
-    
-    // Calculate estimated points
-    for (const auto& file : data_source_files) {
-        stats.total_points += 100000; // Assume 100k points per file
-    }
-    
-    // Get chunk count from config if available
-    auto it = config_map.find("chunk_max_level");
-    if (it != config_map.end()) {
-        stats.total_chunks = std::stoi(it->second);
-    }
-    
-    // Estimate index size
-    stats.index_size_mb = stats.total_points * 0.000024f; // Rough estimate: 24 bytes per point
-    
-    elog(DEBUG1, "Stats: %d files, %ld points, %d chunks, %.2f MB",
-         stats.total_files, stats.total_points, stats.total_chunks, stats.index_size_mb);
-    
-    return stats;
-} 

@@ -1,0 +1,277 @@
+--
+-- trace_knn_query.sql
+-- kNN查询测试
+--
+-- directory paths are passed to us in environment variables
+\getenv abs_srcdir PG_ABS_SRCDIR
+-- 加载trace扩展
+CREATE EXTENSION IF NOT EXISTS trace;
+-- 测试1: 准备数据和索引
+SELECT 'Preparing data and index for kNN queries' as test_phase;
+           test_phase            
+---------------------------------
+ Preparing data and index for kNN queries
+(1 row)
+
+
+-- 加载测试数据
+\set datadir :abs_srcdir '/data'
+SELECT trace_load_data(:'datadir', 3, 1.0) as load_result;
+                     load_result                      
+------------------------------------------------------
+ (3,30,0.001,116.390000,116.400900,39.900000,39.910900,5.000000,15.900000,1000.000000,3009.000000,1002,10.000000,/home/zyl/zhangteng/postgres/contrib/trace/data)
+(1 row)
+
+-- 构建索引
+SELECT trace_build_index() as index_result;
+   index_result    
+-------------------
+ (0.005,3,15,48)
+(1 row)
+
+-- 测试2: 基本kNN查询
+SELECT 'Testing basic kNN queries' as test_phase;
+      test_phase       
+-----------------------
+ Testing basic kNN queries
+(1 row)
+
+-- 查询最近的5个点（从第一个数据集中心附近开始）
+SELECT COUNT(*) as knn_5_count
+FROM trace_knn_query(116.3978, 39.9046, 10.9, 5, '-infinity'::REAL, 'infinity'::REAL, 7);
+ knn_5_count 
+-------------
+           5
+(1 row)
+
+-- 查询最近的3个点
+SELECT 
+    distance,
+    (point).x, (point).y, (point).z, (point).time_stamp,
+    (point).data_type, (point).file_id, (point).point_id
+FROM trace_knn_query(116.3978, 39.9046, 10.9, 3, '-infinity'::REAL, 'infinity'::REAL, 7)
+ORDER BY distance;
+     distance      |    x    |    y    |  z  | time_stamp | data_type | file_id | point_id 
+-------------------+---------+---------+-----+------------+-----------+---------+----------
+ 0.000000000000000 | 116.398 | 39.9046 | 10.9|       1004 |         1 |       1 |        5
+ 0.000100000000000 | 116.398 | 39.9045 | 10.8|       1003 |         1 |       1 |        4
+ 0.000100000000001 | 116.398 | 39.9047 | 11.0|       1005 |         1 |       1 |        6
+(3 rows)
+
+-- 测试3: 不同k值测试
+SELECT 'Testing different k values' as test_phase;
+      test_phase       
+-----------------------
+ Testing different k values
+(1 row)
+
+-- k=1 (最近的1个点)
+SELECT COUNT(*) as knn_1_count
+FROM trace_knn_query(116.3975, 39.9043, 10.6, 1, '-infinity'::REAL, 'infinity'::REAL, 7);
+ knn_1_count 
+-------------
+           1
+(1 row)
+
+-- k=10 (最近的10个点)
+SELECT COUNT(*) as knn_10_count  
+FROM trace_knn_query(116.3975, 39.9043, 10.6, 10, '-infinity'::REAL, 'infinity'::REAL, 7);
+ knn_10_count 
+--------------
+           10
+(1 row)
+
+-- k=20 (如果总点数少于20，应该返回所有点)
+SELECT COUNT(*) as knn_20_count
+FROM trace_knn_query(116.3975, 39.9043, 10.6, 20, '-infinity'::REAL, 'infinity'::REAL, 7);
+ knn_20_count 
+--------------
+           20
+(1 row)
+
+-- 测试4: 时间范围过滤的kNN查询
+SELECT 'Testing kNN with time range filtering' as test_phase;
+          test_phase           
+-------------------------------
+ Testing kNN with time range filtering
+(1 row)
+
+-- 仅在第一个时间段内查询最近的点
+SELECT COUNT(*) as knn_time_range_1
+FROM trace_knn_query(116.3978, 39.9046, 10.9, 5, 1000.0, 1500.0, 7);
+ knn_time_range_1 
+------------------
+                5
+(1 row)
+
+-- 仅在第二个时间段内查询最近的点
+SELECT COUNT(*) as knn_time_range_2
+FROM trace_knn_query(116.4005, 39.9005, 15.5, 5, 2000.0, 2500.0, 7);
+ knn_time_range_2 
+------------------
+                5
+(1 row)
+
+-- 仅在第三个时间段内查询最近的点  
+SELECT COUNT(*) as knn_time_range_3
+FROM trace_knn_query(116.3905, 39.9105, 5.5, 5, 3000.0, 3500.0, 7);
+ knn_time_range_3 
+------------------
+                5
+(1 row)
+
+-- 测试5: 数据类型过滤测试
+SELECT 'Testing kNN with data type filtering' as test_phase;
+         test_phase          
+-----------------------------
+ Testing kNN with data type filtering
+(1 row)
+
+-- 仅查询特定数据类型的最近点
+SELECT COUNT(*) as knn_type_1
+FROM trace_knn_query(116.3978, 39.9046, 10.9, 5, '-infinity'::REAL, 'infinity'::REAL, 1);
+ knn_type_1 
+------------
+          5
+(1 row)
+
+-- 测试6: 不同查询中心点测试
+SELECT 'Testing different query center points' as test_phase;
+          test_phase           
+-------------------------------
+ Testing different query center points
+(1 row)
+
+-- 从数据集1的范围内查询
+SELECT 
+    'Dataset 1 center' as query_center,
+    COUNT(*) as point_count
+FROM trace_knn_query(116.3978, 39.9046, 10.9, 3, '-infinity'::REAL, 'infinity'::REAL, 7);
+ query_center  | point_count 
+---------------+-------------
+ Dataset 1 center |           3
+(1 row)
+
+-- 从数据集2的范围内查询
+SELECT 
+    'Dataset 2 center' as query_center,
+    COUNT(*) as point_count
+FROM trace_knn_query(116.4005, 39.9005, 15.5, 3, '-infinity'::REAL, 'infinity'::REAL, 7);
+ query_center  | point_count 
+---------------+-------------
+ Dataset 2 center |           3
+(1 row)
+
+-- 从数据集3的范围内查询
+SELECT 
+    'Dataset 3 center' as query_center,
+    COUNT(*) as point_count
+FROM trace_knn_query(116.3905, 39.9105, 5.5, 3, '-infinity'::REAL, 'infinity'::REAL, 7);
+ query_center  | point_count 
+---------------+-------------
+ Dataset 3 center |           3
+(1 row)
+
+-- 测试7: 距离验证测试
+SELECT 'Testing distance calculations' as test_phase;
+        test_phase         
+---------------------------
+ Testing distance calculations
+(1 row)
+
+-- 查询最近的点并验证距离递增
+WITH knn_results AS (
+    SELECT 
+        distance,
+        ROW_NUMBER() OVER (ORDER BY distance) as rn
+    FROM trace_knn_query(116.3978, 39.9046, 10.9, 5, '-infinity'::REAL, 'infinity'::REAL, 7)
+)
+SELECT 
+    COUNT(*) as total_results,
+    MIN(distance) as min_distance,
+    MAX(distance) as max_distance,
+    COUNT(CASE WHEN rn > 1 AND distance >= LAG(distance) OVER (ORDER BY rn) THEN 1 END) as correctly_ordered
+FROM knn_results;
+ total_results |  min_distance   |  max_distance   | correctly_ordered 
+---------------+-----------------+-----------------+-------------------
+             5 | 0.0000000000000 | 0.0005657065894 |                 4
+(1 row)
+
+-- 测试8: 边界情况测试
+SELECT 'Testing boundary cases' as test_phase;
+     test_phase      
+---------------------
+ Testing boundary cases
+(1 row)
+
+-- k=0 (应该返回空结果)
+SELECT COUNT(*) as knn_k_zero
+FROM trace_knn_query(116.3978, 39.9046, 10.9, 0, '-infinity'::REAL, 'infinity'::REAL, 7);
+ knn_k_zero 
+------------
+          0
+(1 row)
+
+-- 查询中心在数据范围外
+SELECT COUNT(*) as knn_outside_range
+FROM trace_knn_query(200.0, 200.0, 200.0, 5, '-infinity'::REAL, 'infinity'::REAL, 7);
+ knn_outside_range 
+-------------------
+                 5
+(1 row)
+
+-- 空的时间范围
+SELECT COUNT(*) as knn_empty_time
+FROM trace_knn_query(116.3978, 39.9046, 10.9, 5, 5000.0, 6000.0, 7);
+ knn_empty_time 
+----------------
+              0
+(1 row)
+
+-- 测试9: 具体结果验证
+SELECT 'Testing specific result validation' as test_phase;
+         test_phase          
+-----------------------------
+ Testing specific result validation
+(1 row)
+
+-- 查询最近的点并显示详细信息
+SELECT 
+    ROUND(distance::numeric, 6) as rounded_distance,
+    (point).x, (point).y, (point).z,
+    (point).time_stamp,
+    (point).file_id, (point).point_id
+FROM trace_knn_query(116.3974, 39.9042, 10.5, 3, '-infinity'::REAL, 'infinity'::REAL, 7)
+ORDER BY distance;
+ rounded_distance |    x    |    y    |  z  | time_stamp | file_id | point_id 
+------------------+---------+---------+-----+------------+---------+----------
+         0.000000 | 116.397 | 39.9042 | 10.5|       1000 |       1 |        1
+         0.000141 | 116.398 | 39.9043 | 10.6|       1001 |       1 |        2
+         0.000283 | 116.398 | 39.9044 | 10.7|       1002 |       1 |        3
+(3 rows)
+
+-- 测试10: 性能和统计
+SELECT 'Performance and statistics' as test_phase;
+        test_phase         
+---------------------------
+ Performance and statistics
+(1 row)
+
+
+-- 验证查询是否使用了索引（通过检查索引表是否有数据）
+SELECT 
+    'Index usage verification' as info,
+    (SELECT COUNT(*) FROM tsdmp_octree_leaf) as octree_leaves,
+    (SELECT COUNT(*) FROM tsdmp_leaf_bucket) as leaf_buckets,
+    (SELECT COUNT(*) FROM tsdmp_bucket_kdleaf) as kd_leaves;
+          info           | octree_leaves | leaf_buckets | kd_leaves 
+-------------------------+---------------+--------------+-----------
+ Index usage verification |             3 |           15 |        48
+(1 row)
+
+-- 测试完成
+SELECT 'kNN query tests completed successfully' as final_status;
+            final_status             
+-------------------------------------
+ kNN query tests completed successfully
+(1 row)

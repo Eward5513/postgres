@@ -150,15 +150,6 @@ struct IndexResult {
                     total_octree_nodes(0), total_kdtree_nodes(0) {}
 };
 
-struct StatsResult {
-    int total_files;
-    long long total_points;
-    int total_chunks;
-    float index_size_mb;
-    
-    StatsResult() : total_files(0), total_points(0),
-                    total_chunks(0), index_size_mb(0.0f) {}
-};
 
 /**
  * @brief k-NN query result structure
@@ -209,27 +200,6 @@ void initialize_config();
  */
 LoadResult trace_load_data_impl(const std::string& directory, int max_file_num, float sample_ratio);
 
-/**
- * @brief Clear all loaded data and reset extension state
- * 
- * Removes all loaded data from memory, clears indices, and resets the
- * extension to its initial state. Useful for cleanup or loading new datasets.
- * 
- * @return True if data was successfully cleared, false otherwise
- * 
- * @note This operation cannot be undone - all loaded data will be lost
- */
-bool trace_clear_data_impl();
-
-/**
- * @brief Get extension statistics and status information
- * 
- * Collects and returns comprehensive statistics about the current state
- * of the extension including data counts, memory usage, and index statistics.
- * 
- * @return StatsResult structure containing detailed statistics
- */
-StatsResult trace_get_stats_impl();
 
 // ============================================================================
 // Index Management Functions
@@ -311,47 +281,6 @@ std::vector<SimplePoint> trace_range_query_impl(const SimpleBounds& bounds, int 
 std::vector<std::pair<SimplePoint, float>> trace_knn_query_impl(const SimplePoint& center, int k,
                                                                 float min_time, float max_time, int data_type_mask);
 
-// ============================================================================
-// Configuration Management Functions
-// ============================================================================
-
-/**
- * @brief Set a configuration parameter
- * 
- * Updates a configuration parameter with the specified value. Configuration
- * parameters control various aspects of the extension behavior including
- * performance tuning, logging levels, and algorithm selection.
- * 
- * @param key Configuration parameter name
- * @param value New value for the parameter (as string)
- * 
- * @throws std::exception if parameter name is invalid or value format is incorrect
- * 
- * @note Changes take effect immediately for most parameters
- * @note Some parameters may require data reload or index rebuild
- * 
- * @example
- * trace_set_config_impl("log_level", "DEBUG");
- * trace_set_config_impl("cache_size_mb", "512");
- */
-void trace_set_config_impl(const std::string& key, const std::string& value);
-
-/**
- * @brief Get a configuration parameter value
- * 
- * Retrieves the current value of a configuration parameter. Returns an
- * empty string if the parameter is not found or has not been set.
- * 
- * @param key Configuration parameter name
- * @return Current value of the parameter, or empty string if not found
- * 
- * @example
- * std::string log_level = trace_get_config_impl("log_level");
- * if (log_level.empty()) {
- *     std::cout << "Log level not configured\n";
- * }
- */
-std::string trace_get_config_impl(const std::string& key);
 
 // ============================================================================
 // PostgreSQL Interface Utility Functions

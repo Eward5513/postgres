@@ -51,118 +51,52 @@ CREATE TYPE knn_result AS (
     point spatiotemporal_point
 );
 
--- 创建存储表
+-- 创建存储表（仅保留当前实现使用到的表）
 
--- 八叉树节点存储表 (用于序列化的二进制数据存储)
-CREATE TABLE IF NOT EXISTS all_octree_table (
-    key INT PRIMARY KEY,
-    data BYTEA,
-    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+-- 外层叶子索引（文件块归属）
+CREATE TABLE IF NOT EXISTS tsdmp_octree_leaf (
+    dataset_path text NOT NULL,
+    prefix bigint NOT NULL,
+    level int NOT NULL,
+    xi int NOT NULL,
+    yi int NOT NULL,
+    zi int NOT NULL,
+    point_count int NOT NULL,
+    file_path text NOT NULL,
+    minx real NOT NULL, miny real NOT NULL, minz real NOT NULL,
+    maxx real NOT NULL, maxy real NOT NULL, maxz real NOT NULL,
+    PRIMARY KEY(dataset_path, prefix, level)
 );
 
--- KD树节点存储表 (用于序列化的二进制数据存储)
-CREATE TABLE IF NOT EXISTS all_kdtree (
-    key1 INT,
-    key2 INT,
-    data BYTEA,
-    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-    PRIMARY KEY (key1, key2)
+-- 叶内自适应 octree 桶
+CREATE TABLE IF NOT EXISTS tsdmp_leaf_bucket (
+    dataset_path text NOT NULL,
+    leaf_prefix bigint NOT NULL,
+    leaf_level int NOT NULL,
+    bx int NOT NULL, by int NOT NULL, bz int NOT NULL,
+    level int NOT NULL,
+    offset bigint NOT NULL,
+    count int NOT NULL,
+    file_path text NOT NULL,
+    minx real NOT NULL, miny real NOT NULL, minz real NOT NULL,
+    maxx real NOT NULL, maxy real NOT NULL, maxz real NOT NULL,
+    PRIMARY KEY(dataset_path, leaf_prefix, leaf_level, bx, by, bz, level)
 );
 
--- 网格连接存储表 (用于存储二进制格式的连接数据)
-CREATE TABLE IF NOT EXISTS mesh_connections_table (
-    key INT PRIMARY KEY,
-    data BYTEA
+-- 桶内 kd 叶（块偏移）
+CREATE TABLE IF NOT EXISTS tsdmp_bucket_kdleaf (
+    dataset_path text NOT NULL,
+    leaf_prefix bigint NOT NULL,
+    leaf_level int NOT NULL,
+    bx int NOT NULL, by int NOT NULL, bz int NOT NULL,
+    kd_idx int NOT NULL,
+    offset bigint NOT NULL,
+    count int NOT NULL,
+    file_path text NOT NULL,
+    minx real NOT NULL, miny real NOT NULL, minz real NOT NULL,
+    maxx real NOT NULL, maxy real NOT NULL, maxz real NOT NULL,
+    PRIMARY KEY(dataset_path, leaf_prefix, leaf_level, bx, by, bz, kd_idx)
 );
-
--- 用户数据存储表 (用于存储大对象引用)
-CREATE TABLE IF NOT EXISTS user_data (
-    key INT PRIMARY KEY,
-    lo_oid OID,
-    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-);
-
--- 原始数据存储表 (用于存储大对象引用)
-CREATE TABLE IF NOT EXISTS original_data (
-    key1 INT,
-    key2 INT,
-    lo_oid OID,
-    userid_ivf_index BYTEA,
-    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-    PRIMARY KEY (key1, key2)
-);
-
--- 轨迹数据存储表 (用于存储二进制格式的轨迹数据)
-CREATE TABLE IF NOT EXISTS trajectory_table (
-    id INT PRIMARY KEY,
-    data BYTEA,
-    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-);
-
--- 数据集信息表 (单行存储当前加载的数据集信息)
-CREATE TABLE IF NOT EXISTS trace_dataset_info (
-    id INTEGER PRIMARY KEY DEFAULT 1,
-    dataset_path TEXT NOT NULL,
-    last_load_time TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-    total_files INTEGER NOT NULL,
-    total_points BIGINT NOT NULL,
-    sample_ratio REAL NOT NULL,
-    
-    -- 空间边界
-    min_x REAL NOT NULL,
-    max_x REAL NOT NULL,
-    min_y REAL NOT NULL,
-    max_y REAL NOT NULL,
-    min_z REAL NOT NULL,
-    max_z REAL NOT NULL,
-    
-    -- 时间边界
-    min_time REAL,
-    max_time REAL,
-    
-    -- 加载耗时
-    load_duration_seconds REAL,
-    
-    -- 文件路径列表（JSON格式存储）
-    file_paths JSONB,
-    
-    -- 确保只有一行数据
-    CONSTRAINT single_row CHECK (id = 1)
-);
-
--- 点云数据存储表 (用于存储从.obj文件中提取的顶点数据)
-CREATE TABLE IF NOT EXISTS point_cloud (
-    id SERIAL PRIMARY KEY,
-    file_id INTEGER NOT NULL,
-    vertex_id INTEGER NOT NULL,
-    x REAL NOT NULL,
-    y REAL NOT NULL,
-    z REAL NOT NULL,
-    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-    UNIQUE(file_id, vertex_id)
-);
-
--- 网格数据存储表 (用于存储从.obj文件中提取的面数据)
-CREATE TABLE IF NOT EXISTS mesh (
-    id SERIAL PRIMARY KEY,
-    file_id INTEGER NOT NULL,
-    face_id INTEGER NOT NULL,
-    vertex_count INTEGER NOT NULL,
-    vertex_indices INTEGER[] NOT NULL,
-    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-    UNIQUE(file_id, face_id)
-);
-
--- 为点云表创建索引
-CREATE INDEX IF NOT EXISTS idx_point_cloud_spatial ON point_cloud(x, y, z);
-
--- 为网格表创建索引
-CREATE INDEX IF NOT EXISTS idx_mesh_face_id ON mesh(face_id);
 
 -- 函数声明
 
@@ -209,35 +143,3 @@ RETURNS SETOF knn_result
 AS 'MODULE_PATHNAME', 'trace_knn_query'
 LANGUAGE C STRICT;
 
--- 清理函数
-CREATE OR REPLACE FUNCTION trace_clear_data()
-RETURNS BOOLEAN
-AS 'MODULE_PATHNAME', 'trace_clear_data'
-LANGUAGE C STRICT;
-
--- 统计信息函数
-CREATE OR REPLACE FUNCTION trace_get_stats()
-RETURNS TABLE(
-    total_files INTEGER,
-    total_points BIGINT,
-    total_chunks INTEGER,
-    index_size_mb REAL
-)
-AS 'MODULE_PATHNAME', 'trace_get_stats'
-LANGUAGE C STRICT;
-
--- 配置管理函数
-CREATE OR REPLACE FUNCTION trace_set_config(
-    config_key TEXT,
-    config_value TEXT
-)
-RETURNS BOOLEAN
-AS 'MODULE_PATHNAME', 'trace_set_config'
-LANGUAGE C STRICT;
-
-CREATE OR REPLACE FUNCTION trace_get_config(
-    config_key TEXT
-)
-RETURNS TEXT
-AS 'MODULE_PATHNAME', 'trace_get_config'
-LANGUAGE C STRICT;
