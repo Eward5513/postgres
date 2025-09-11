@@ -38,14 +38,21 @@ public:
      * @return SimpleBounds Overall bounds of loaded data
      */
     SimpleBounds load_data(const std::vector<std::string>& filenames);
+    
+    /**
+     * @brief Get total number of points loaded
+     * @return Total point count across all loaded files
+     */
+    long long getTotalPoints() const;
 
 private:
     /**
      * @brief Calculate spatial bounds for a single file
      * @param filename File to process
      * @param bounds Reference to bounds structure to update
+     * @return Number of valid points processed in the file
      */
-    void calculate_bound(const std::string& filename, SimpleBounds& bounds);
+    long long calculate_bound(const std::string& filename, SimpleBounds& bounds);
     
     // Core member variables needed for data loading
     std::string original_directory;   ///< Source directory path
@@ -53,6 +60,7 @@ private:
     float sample_ratio;              ///< Data sampling ratio
     std::vector<std::string> filenames; ///< List of data files
     std::unordered_map<std::string, double> build_time; ///< Timing information
+    long long total_points_loaded;   ///< Total number of points loaded
 };
 
 #endif // TRACE_DATA_LOADER_H

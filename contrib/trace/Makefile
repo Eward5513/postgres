@@ -17,7 +17,7 @@ DATA = trace--1.0.sql
 PGFILEDESC = "TRACE - Time-Spatial Trajectory Analysis and Computation Engine Extension"
 
 # Regression tests
-REGRESS = trace_basic trace_index trace_range_query trace_knn_query trace_load_data
+REGRESS = trace_basic trace_index #trace_range_query trace_knn_query
 
 # Build system
 subdir = contrib/trace

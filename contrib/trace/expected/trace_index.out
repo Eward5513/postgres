@@ -14,12 +14,17 @@ SELECT 'Preparing data for index building' as test_phase;
 (1 row)
 
 
--- 加载测试数据
+-- 加载测试数据（不测试加载时间）
 \set datadir :abs_srcdir '/data'
-SELECT trace_load_data(:'datadir', 3, 1.0) as load_result;
-                     load_result                      
-------------------------------------------------------
- (3,30,0.001,116.390000,116.400900,39.900000,39.910900,5.000000,15.900000,1000.000000,3009.000000,1002,10.000000,/home/zyl/zhangteng/postgres/contrib/trace/data)
+SELECT 
+    (result).files_loaded as files_loaded,
+    (result).total_points as total_points
+FROM (
+    SELECT trace_load_data(:'datadir', 3, 1.0) as result
+) t;
+ files_loaded | total_points 
+--------------+--------------
+            3 |           30
 (1 row)
 
 -- 测试2: 索引构建测试
@@ -29,26 +34,19 @@ SELECT 'Testing index building' as test_phase;
  Testing index building
 (1 row)
 
--- 构建索引
-SELECT trace_build_index() as index_result;
-   index_result    
--------------------
- (0.005,3,15,48)
+-- 构建索引（不测试构建时间）
+SELECT 
+    (result).chunk_count as chunk_count,
+    (result).total_octree_nodes as octree_nodes,
+    (result).total_kdtree_nodes as kdtree_nodes
+FROM (
+    SELECT trace_build_index() as result
+) t;
+ chunk_count | octree_nodes | kdtree_nodes 
+-------------+--------------+--------------
+           3 |           15 |           48
 (1 row)
 
--- 验证索引构建结果
-SELECT 
-    (index_result).index_build_time > 0 as has_build_time,
-    (index_result).chunk_count as chunk_count,
-    (index_result).total_octree_nodes as octree_nodes,
-    (index_result).total_kdtree_nodes as kdtree_nodes
-FROM (
-    SELECT trace_build_index() as index_result
-) t;
- has_build_time | chunk_count | octree_nodes | kdtree_nodes 
-----------------+-------------+--------------+--------------
- t              |           3 |           15 |           48
-(1 row)
 
 -- 测试3: 验证索引表数据
 SELECT 'Verifying index table data' as test_phase;
@@ -58,14 +56,14 @@ SELECT 'Verifying index table data' as test_phase;
 (1 row)
 
 -- 检查octree叶子表
-SELECT COUNT(*) as octree_leaf_count FROM tsdmp_octree_leaf;
+SELECT COUNT(*) as octree_leaf_count FROM trace_octree_leaf;
  octree_leaf_count 
 -------------------
                  3
 (1 row)
 
 SELECT dataset_path, COUNT(*) as leaf_count 
-FROM tsdmp_octree_leaf 
+FROM trace_octree_leaf 
 GROUP BY dataset_path;
                          dataset_path                          | leaf_count 
 ---------------------------------------------------------------+------------
@@ -73,14 +71,14 @@ GROUP BY dataset_path;
 (1 row)
 
 -- 检查叶内桶表
-SELECT COUNT(*) as leaf_bucket_count FROM tsdmp_leaf_bucket;
+SELECT COUNT(*) as leaf_bucket_count FROM trace_leaf_bucket;
  leaf_bucket_count 
 -------------------
                 15
 (1 row)
 
 SELECT dataset_path, COUNT(*) as bucket_count 
-FROM tsdmp_leaf_bucket 
+FROM trace_leaf_bucket 
 GROUP BY dataset_path;
                          dataset_path                          | bucket_count 
 ---------------------------------------------------------------+--------------
@@ -88,14 +86,14 @@ GROUP BY dataset_path;
 (1 row)
 
 -- 检查桶内kd叶表
-SELECT COUNT(*) as bucket_kdleaf_count FROM tsdmp_bucket_kdleaf;
+SELECT COUNT(*) as bucket_kdleaf_count FROM trace_bucket_kdleaf;
  bucket_kdleaf_count 
 ---------------------
                   48
 (1 row)
 
 SELECT dataset_path, COUNT(*) as kdleaf_count 
-FROM tsdmp_bucket_kdleaf 
+FROM trace_bucket_kdleaf 
 GROUP BY dataset_path;
                          dataset_path                          | kdleaf_count 
 ---------------------------------------------------------------+--------------
@@ -113,7 +111,7 @@ SELECT 'Testing index integrity' as test_phase;
 SELECT 
     COUNT(*) as total_leaves,
     COUNT(CASE WHEN minx <= maxx AND miny <= maxy AND minz <= maxz THEN 1 END) as valid_bounds
-FROM tsdmp_octree_leaf;
+FROM trace_octree_leaf;
  total_leaves | valid_bounds 
 --------------+--------------
             3 |            3
@@ -126,7 +124,7 @@ SELECT
     MIN(count) as min_points,
     MAX(count) as max_points,
     AVG(count) as avg_points
-FROM tsdmp_leaf_bucket
+FROM trace_leaf_bucket
 GROUP BY level
 ORDER BY level;
  level | bucket_count | min_points | max_points |      avg_points      
@@ -143,18 +141,24 @@ SELECT 'Testing multiple index builds' as test_phase;
  Testing multiple index builds
 (1 row)
 
--- 再次构建索引（应该清理并重建）
-SELECT trace_build_index() as second_build_result;
- second_build_result 
----------------------
- (0.004,3,15,48)
+-- 再次构建索引（应该清理并重建，不测试构建时间）
+SELECT 
+    (result).chunk_count as chunk_count,
+    (result).total_octree_nodes as octree_nodes,
+    (result).total_kdtree_nodes as kdtree_nodes
+FROM (
+    SELECT trace_build_index() as result
+) t;
+ chunk_count | octree_nodes | kdtree_nodes 
+-------------+--------------+--------------
+           3 |           15 |           48
 (1 row)
 
 -- 验证重建后的数据一致性
 SELECT 
-    (SELECT COUNT(*) FROM tsdmp_octree_leaf) as octree_count,
-    (SELECT COUNT(*) FROM tsdmp_leaf_bucket) as bucket_count,
-    (SELECT COUNT(*) FROM tsdmp_bucket_kdleaf) as kdleaf_count;
+    (SELECT COUNT(*) FROM trace_octree_leaf) as octree_count,
+    (SELECT COUNT(*) FROM trace_leaf_bucket) as bucket_count,
+    (SELECT COUNT(*) FROM trace_bucket_kdleaf) as kdleaf_count;
  octree_count | bucket_count | kdleaf_count 
 --------------+--------------+--------------
             3 |           15 |           48

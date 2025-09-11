@@ -18,6 +18,19 @@
 using std::string;
 namespace fs = std::filesystem;
 
+// Helper function to format float values for PostgreSQL
+static std::string format_float_for_sql(float value) {
+    if (std::isinf(value)) {
+        return value > 0 ? "'infinity'" : "'-infinity'";
+    } else if (std::isnan(value)) {
+        return "'nan'";
+    } else {
+        char buf[32];
+        snprintf(buf, sizeof(buf), "%.6f", value);
+        return std::string(buf);
+    }
+}
+
 // 简易 SQL 字面量转义
 std::string sql_quote_literal(const std::string &s)
 {
@@ -35,9 +48,9 @@ void persist_prepare_dataset(const std::string &dataset_path)
     if (SPI_connect() != SPI_OK_CONNECT) {
         elog(ERROR, "SPI_connect failed");
     }
-    std::string del1 = "DELETE FROM tsdmp_bucket_kdleaf WHERE dataset_path = " + sql_quote_literal(dataset_path);
-    std::string del2 = "DELETE FROM tsdmp_leaf_bucket WHERE dataset_path = " + sql_quote_literal(dataset_path);
-    std::string del3 = "DELETE FROM tsdmp_octree_leaf WHERE dataset_path = " + sql_quote_literal(dataset_path);
+    std::string del1 = "DELETE FROM trace_bucket_kdleaf WHERE dataset_path = " + sql_quote_literal(dataset_path);
+    std::string del2 = "DELETE FROM trace_leaf_bucket WHERE dataset_path = " + sql_quote_literal(dataset_path);
+    std::string del3 = "DELETE FROM trace_octree_leaf WHERE dataset_path = " + sql_quote_literal(dataset_path);
     SPI_execute(del1.c_str(), false, 0);
     SPI_execute(del2.c_str(), false, 0);
     SPI_execute(del3.c_str(), false, 0);
@@ -78,12 +91,13 @@ void persist_leaf_index(const std::string &dataset_path,
     snprintf(fname, sizeof(fname), "leaf_L%d_%016llx.bin", leaf_level, (unsigned long long)leaf_prefix);
     fs::path file_path = out_dir / std::string(fname);
     snprintf(leaf_sql, sizeof(leaf_sql),
-             "INSERT INTO tsdmp_octree_leaf(dataset_path,prefix,level,xi,yi,zi,point_count,file_path,minx,miny,minz,maxx,maxy,maxz) "
-             "VALUES (%s, %lld, %d, %u, %u, %u, %u, %s, %f, %f, %f, %f, %f, %f)",
+             "INSERT INTO trace_octree_leaf(dataset_path,prefix,level,xi,yi,zi,point_count,file_path,minx,miny,minz,maxx,maxy,maxz) "
+             "VALUES (%s, %lld, %d, %u, %u, %u, %u, %s, %s, %s, %s, %s, %s, %s)",
              sql_quote_literal(dataset_path).c_str(), (long long)leaf_prefix, leaf_level,
              (unsigned)xi_cell, (unsigned)yi_cell, (unsigned)zi_cell,
              (unsigned)points.size(), sql_quote_literal(file_path.string()).c_str(),
-             minx, miny, minz, maxx, maxy, maxz);
+             format_float_for_sql(minx).c_str(), format_float_for_sql(miny).c_str(), format_float_for_sql(minz).c_str(),
+             format_float_for_sql(maxx).c_str(), format_float_for_sql(maxy).c_str(), format_float_for_sql(maxz).c_str());
     SPI_execute(leaf_sql, false, 0);
     SPI_finish();
 
@@ -190,12 +204,13 @@ void persist_leaf_index(const std::string &dataset_path,
         float bminx=bk.bminx,bminy=bk.bminy,bminz=bk.bminz,bmaxx=bk.bmaxx,bmaxy=bk.bmaxy,bmaxz=bk.bmaxz;
         char bsql[1024];
         snprintf(bsql, sizeof(bsql),
-                 "INSERT INTO tsdmp_leaf_bucket(dataset_path,leaf_prefix,leaf_level,bx,by,bz,level,offset,count,file_path,minx,miny,minz,maxx,maxy,maxz) "
-                 "VALUES (%s, %lld, %d, %d, %d, %d, %d, %lld, %u, %s, %f, %f, %f, %f, %f, %f)",
+                 "INSERT INTO trace_leaf_bucket(dataset_path,leaf_prefix,leaf_level,bx,by,bz,level,data_offset,count,file_path,minx,miny,minz,maxx,maxy,maxz) "
+                 "VALUES (%s, %lld, %d, %d, %d, %d, %d, %lld, %u, %s, %s, %s, %s, %s, %s, %s)",
                  sql_quote_literal(dataset_path).c_str(), (long long)leaf_prefix, leaf_level,
                  bx, by, bz, bk.level,
                  (long long)bucket_offset, (unsigned)pts.size(), sql_quote_literal(file_path.string()).c_str(),
-                 bminx,bminy,bminz,bmaxx,bmaxy,bmaxz);
+                 format_float_for_sql(bminx).c_str(), format_float_for_sql(bminy).c_str(), format_float_for_sql(bminz).c_str(),
+                 format_float_for_sql(bmaxx).c_str(), format_float_for_sql(bmaxy).c_str(), format_float_for_sql(bmaxz).c_str());
         SPI_execute(bsql, false, 0);
 
         // 插入 kd 叶行
@@ -203,11 +218,12 @@ void persist_leaf_index(const std::string &dataset_path,
             const auto &kl = kd_leaves[ki];
             char ksql[1024];
             snprintf(ksql, sizeof(ksql),
-                     "INSERT INTO tsdmp_bucket_kdleaf(dataset_path,leaf_prefix,leaf_level,bx,by,bz,kd_idx,offset,count,file_path,minx,miny,minz,maxx,maxy,maxz) "
-                     "VALUES (%s, %lld, %d, %d, %d, %d, %d, %lld, %u, %s, %f, %f, %f, %f, %f, %f)",
+                     "INSERT INTO trace_bucket_kdleaf(dataset_path,leaf_prefix,leaf_level,bx,by,bz,kd_idx,data_offset,count,file_path,minx,miny,minz,maxx,maxy,maxz) "
+                     "VALUES (%s, %lld, %d, %d, %d, %d, %d, %lld, %u, %s, %s, %s, %s, %s, %s, %s)",
                      sql_quote_literal(dataset_path).c_str(), (long long)leaf_prefix, leaf_level,
                      bx, by, bz, ki, (long long)kl.offset, (unsigned)kl.count, sql_quote_literal(file_path.string()).c_str(),
-                     kl.minx,kl.miny,kl.minz,kl.maxx,kl.maxy,kl.maxz);
+                     format_float_for_sql(kl.minx).c_str(), format_float_for_sql(kl.miny).c_str(), format_float_for_sql(kl.minz).c_str(),
+                     format_float_for_sql(kl.maxx).c_str(), format_float_for_sql(kl.maxy).c_str(), format_float_for_sql(kl.maxz).c_str());
             SPI_execute(ksql, false, 0);
         }
     }
@@ -225,7 +241,7 @@ std::vector<LeafMeta> db_query_leaves_intersecting(const std::string &dataset_pa
     char sql[512];
     snprintf(sql, sizeof(sql),
              "SELECT file_path, point_count, minx, miny, minz, maxx, maxy, maxz "
-             "FROM tsdmp_octree_leaf WHERE dataset_path=%s AND "
+             "FROM trace_octree_leaf WHERE dataset_path=%s AND "
              "maxx >= %f AND minx <= %f AND maxy >= %f AND miny <= %f AND maxz >= %f AND minz <= %f",
              sql_quote_literal(dataset_path).c_str(),
              b.min_x, b.max_x, b.min_y, b.max_y, b.min_z, b.max_z);
@@ -269,7 +285,7 @@ std::vector<LeafMeta> db_query_all_leaves(const std::string &dataset_path)
     if (SPI_connect() != SPI_OK_CONNECT) {
         elog(ERROR, "SPI_connect failed");
     }
-    std::string sql = std::string("SELECT file_path, point_count, minx, miny, minz, maxx, maxy, maxz FROM tsdmp_octree_leaf WHERE dataset_path=") + sql_quote_literal(dataset_path);
+    std::string sql = std::string("SELECT file_path, point_count, minx, miny, minz, maxx, maxy, maxz FROM trace_octree_leaf WHERE dataset_path=") + sql_quote_literal(dataset_path);
     int rc = SPI_execute(sql.c_str(), true, 0);
     if (rc != SPI_OK_SELECT) {
         SPI_finish();
@@ -374,8 +390,8 @@ std::vector<BucketMeta> db_query_buckets_intersecting(const std::string &dataset
     }
     char sql[512];
     snprintf(sql, sizeof(sql),
-             "SELECT file_path, bx,by,bz, level, leaf_prefix, leaf_level, offset, count, minx,miny,minz,maxx,maxy,maxz "
-             "FROM tsdmp_leaf_bucket WHERE dataset_path=%s AND "
+             "SELECT file_path, bx,by,bz, level, leaf_prefix, leaf_level, data_offset, count, minx,miny,minz,maxx,maxy,maxz "
+             "FROM trace_leaf_bucket WHERE dataset_path=%s AND "
              "maxx >= %f AND minx <= %f AND maxy >= %f AND miny <= %f AND maxz >= %f AND minz <= %f",
              sql_quote_literal(dataset_path).c_str(), b.min_x, b.max_x, b.min_y, b.max_y, b.min_z, b.max_z);
     int rc = SPI_execute(sql, true, 0);
@@ -407,7 +423,7 @@ std::vector<KdLeafMeta> db_query_all_kdleaves(const std::string &dataset_path)
 {
     std::vector<KdLeafMeta> metas;
     if (SPI_connect() != SPI_OK_CONNECT) { elog(ERROR, "SPI_connect failed"); }
-    std::string sql = std::string("SELECT file_path, bx,by,bz, leaf_prefix, leaf_level, offset, count, minx,miny,minz,maxx,maxy,maxz FROM tsdmp_bucket_kdleaf WHERE dataset_path=") + sql_quote_literal(dataset_path);
+    std::string sql = std::string("SELECT file_path, bx,by,bz, leaf_prefix, leaf_level, data_offset, count, minx,miny,minz,maxx,maxy,maxz FROM trace_bucket_kdleaf WHERE dataset_path=") + sql_quote_literal(dataset_path);
     int rc = SPI_execute(sql.c_str(), true, 0);
     if (rc != SPI_OK_SELECT) { SPI_finish(); elog(ERROR, "SPI_execute select failed"); }
     SPITupleTable *tuptable = SPI_tuptable; TupleDesc tupdesc = tuptable->tupdesc; uint64 nrows = SPI_processed;

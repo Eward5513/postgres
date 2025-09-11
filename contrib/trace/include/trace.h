@@ -90,16 +90,16 @@ enum class IndexType {
 
 // Simplified data structures (independent of TRACE)
 struct SimpleBounds {
-    float min_x, min_y, min_z, min_time;
-    float max_x, max_y, max_z, max_time;
+    float min_x, min_y, min_z;
+    float max_x, max_y, max_z;
     
-    SimpleBounds() : min_x(0), min_y(0), min_z(0), min_time(0),
-                     max_x(0), max_y(0), max_z(0), max_time(0) {}
+    SimpleBounds() : min_x(0), min_y(0), min_z(0),
+                     max_x(0), max_y(0), max_z(0) {}
     
-    SimpleBounds(float minx, float miny, float minz, float mint,
-                 float maxx, float maxy, float maxz, float maxt)
-        : min_x(minx), min_y(miny), min_z(minz), min_time(mint),
-          max_x(maxx), max_y(maxy), max_z(maxz), max_time(maxt) {}
+    SimpleBounds(float minx, float miny, float minz,
+                 float maxx, float maxy, float maxz)
+        : min_x(minx), min_y(miny), min_z(minz),
+          max_x(maxx), max_y(maxy), max_z(maxz) {}
 };
 
 struct SimplePoint {
@@ -124,7 +124,7 @@ struct LoadResult {
     float min_x, max_x;
     float min_y, max_y;
     float min_z, max_z;
-    float min_time, max_time;
+    // Time fields removed
     long long total_file_size_bytes;
     float avg_points_per_file;
     std::string dataset_path;
@@ -136,7 +136,6 @@ struct LoadResult {
                    min_x(FLT_MAX), max_x(-FLT_MAX), 
                    min_y(FLT_MAX), max_y(-FLT_MAX),
                    min_z(FLT_MAX), max_z(-FLT_MAX),
-                   min_time(FLT_MAX), max_time(-FLT_MAX),
                    total_file_size_bytes(0), avg_points_per_file(0.0f) {}
 };
 
@@ -263,8 +262,8 @@ std::vector<SimplePoint> trace_range_query_impl(const SimpleBounds& bounds, int 
  * 
  * @param center Center point for the query
  * @param k Number of nearest neighbors to find (1-10000)
- * @param min_time Minimum time bound for temporal filtering
- * @param max_time Maximum time bound for temporal filtering
+ * @param min_time Minimum time bound for temporal filtering (currently ignored)
+ * @param max_time Maximum time bound for temporal filtering (currently ignored)
  * @param data_type_mask Bit mask for filtering by data type (0 = all types)
  * @return Vector of (point, distance) pairs sorted by distance
  * 
@@ -294,6 +293,33 @@ std::vector<std::pair<SimplePoint, float>> trace_knn_query_impl(const SimplePoin
  * implementation and PostgreSQL's C interface.
  */
 namespace trace {
+
+/**
+ * @brief Get current dataset bounds from database
+ * 
+ * Retrieves the spatial bounds of the currently loaded dataset from the database.
+ * This function replaces the previous global_bounds variable approach.
+ * 
+ * @param bounds SimpleBounds reference to store the retrieved bounds
+ * @return true if bounds were successfully retrieved, false otherwise
+ * 
+ * @throws PostgreSQL ERROR if database query fails
+ */
+bool get_current_dataset_bounds(SimpleBounds& bounds);
+
+/**
+ * @brief Get current dataset information from database
+ * 
+ * Retrieves the dataset path and file list from the database.
+ * This function replaces the previous config_map and data_source_files global variables.
+ * 
+ * @param dataset_path Reference to string to store the dataset path
+ * @param file_paths Reference to vector to store the list of data files
+ * @return true if information was successfully retrieved, false otherwise
+ * 
+ * @throws PostgreSQL ERROR if database query fails
+ */
+bool get_current_dataset_info(std::string& dataset_path, std::vector<std::string>& file_paths);
 
 /**
  * @brief Create PostgreSQL tuple from LoadResult structure
@@ -372,8 +398,8 @@ HeapTuple create_knn_result_tuple(const KnnResult& result, TupleDesc tupdesc);
  * @param max_x Maximum X coordinate
  * @param max_y Maximum Y coordinate
  * @param max_z Maximum Z coordinate
- * @param min_time Minimum time value
- * @param max_time Maximum time value
+ * @param min_time Minimum time value (currently ignored)
+ * @param max_time Maximum time value (currently ignored)
  * @return SimpleBounds structure with specified bounds
  * 
  * @throws std::exception if bounds are invalid (min > max)

@@ -89,7 +89,7 @@ _PG_init(void)
     
     trace_initialized = true;
     
-    elog(INFO, "TSDMP Extension initialized successfully");
+    elog(DEBUG1, "TSDMP Extension initialized successfully");
 }
 
 // Extension cleanup
@@ -104,115 +104,7 @@ _PG_fini(void)
     elog(INFO, "TSDMP Extension finalized");
 }
 
-// Dataset bounds structure for collecting boundary information
-struct DatasetBounds {
-    float min_x = FLT_MAX, max_x = -FLT_MAX;
-    float min_y = FLT_MAX, max_y = -FLT_MAX;
-    float min_z = FLT_MAX, max_z = -FLT_MAX;
-    float min_time = FLT_MAX, max_time = -FLT_MAX;
-};
-
-// Helper function to store dataset information
-static void store_dataset_info(const std::string& dataset_path, 
-                              const LoadResult& result, 
-                              float sample_ratio) {
-    
-    if (SPI_connect() != SPI_OK_CONNECT) {
-        elog(WARNING, "Failed to connect to SPI for storing dataset info");
-        return;
-    }
-    
-    // Create JSON array for file paths from LoadResult
-    std::string json_paths = "[";
-    for (size_t i = 0; i < result.loaded_file_paths.size(); ++i) {
-        if (i > 0) json_paths += ",";
-        json_paths += "\"" + result.loaded_file_paths[i] + "\"";
-    }
-    json_paths += "]";
-    
-    // Escape single quotes in paths
-    std::string escaped_dataset_path = dataset_path;
-    std::string escaped_json_paths = json_paths;
-    
-    // Replace single quotes with two single quotes for SQL escaping
-    size_t pos = 0;
-    while ((pos = escaped_dataset_path.find("'", pos)) != std::string::npos) {
-        escaped_dataset_path.replace(pos, 1, "''");
-        pos += 2;
-    }
-    pos = 0;
-    while ((pos = escaped_json_paths.find("'", pos)) != std::string::npos) {
-        escaped_json_paths.replace(pos, 1, "''");
-        pos += 2;
-    }
-    
-    char query[4096];
-    snprintf(query, sizeof(query),
-        "INSERT INTO trace_dataset_info "
-        "(dataset_path, total_files, total_points, sample_ratio, "
-        " min_x, max_x, min_y, max_y, min_z, max_z, min_time, max_time, "
-        " load_duration_seconds, file_paths) "
-        "VALUES ('%s', %d, %ld, %.3f, %.6f, %.6f, %.6f, %.6f, %.6f, %.6f, %.6f, %.6f, %.3f, '%s') "
-        "ON CONFLICT (id) DO UPDATE SET "
-        "dataset_path = EXCLUDED.dataset_path, "
-        "total_files = EXCLUDED.total_files, "
-        "total_points = EXCLUDED.total_points, "
-        "sample_ratio = EXCLUDED.sample_ratio, "
-        "last_load_time = CURRENT_TIMESTAMP, "
-        "min_x = EXCLUDED.min_x, max_x = EXCLUDED.max_x, "
-        "min_y = EXCLUDED.min_y, max_y = EXCLUDED.max_y, "
-        "min_z = EXCLUDED.min_z, max_z = EXCLUDED.max_z, "
-        "min_time = EXCLUDED.min_time, max_time = EXCLUDED.max_time, "
-        "load_duration_seconds = EXCLUDED.load_duration_seconds, "
-        "file_paths = EXCLUDED.file_paths",
-        escaped_dataset_path.c_str(), result.files_loaded, result.total_points, sample_ratio,
-        result.min_x, result.max_x, result.min_y, result.max_y, 
-        result.min_z, result.max_z, result.min_time, result.max_time,
-        result.load_time_seconds, escaped_json_paths.c_str());
-    
-    int ret = SPI_execute(query, false, 0);
-    if (ret != SPI_OK_INSERT && ret != SPI_OK_UPDATE) {
-        elog(WARNING, "Failed to store dataset info: %d", ret);
-    } else {
-        elog(INFO, "Dataset info stored: %s (%d files, %ld points, bounds: %.2f-%.2f, %.2f-%.2f, %.2f-%.2f)", 
-             dataset_path.c_str(), result.files_loaded, result.total_points,
-             result.min_x, result.max_x, result.min_y, result.max_y, result.min_z, result.max_z);
-    }
-    
-    SPI_finish();
-}
-
-// Helper function to get current dataset information
-static bool get_current_dataset_bounds(DatasetBounds& bounds) {
-    if (SPI_connect() != SPI_OK_CONNECT) {
-        elog(WARNING, "Failed to connect to SPI for reading dataset info");
-        return false;
-    }
-    
-    int ret = SPI_execute("SELECT min_x, max_x, min_y, max_y, min_z, max_z, min_time, max_time "
-                         "FROM trace_dataset_info WHERE id = 1", true, 1);
-    
-    if (ret == SPI_OK_SELECT && SPI_processed > 0) {
-        HeapTuple tuple = SPI_tuptable->vals[0];
-        TupleDesc tupdesc = SPI_tuptable->tupdesc;
-        bool isnull;
-        
-        bounds.min_x = DatumGetFloat4(SPI_getbinval(tuple, tupdesc, 1, &isnull));
-        bounds.max_x = DatumGetFloat4(SPI_getbinval(tuple, tupdesc, 2, &isnull));
-        bounds.min_y = DatumGetFloat4(SPI_getbinval(tuple, tupdesc, 3, &isnull));
-        bounds.max_y = DatumGetFloat4(SPI_getbinval(tuple, tupdesc, 4, &isnull));
-        bounds.min_z = DatumGetFloat4(SPI_getbinval(tuple, tupdesc, 5, &isnull));
-        bounds.max_z = DatumGetFloat4(SPI_getbinval(tuple, tupdesc, 6, &isnull));
-        bounds.min_time = DatumGetFloat4(SPI_getbinval(tuple, tupdesc, 7, &isnull));
-        bounds.max_time = DatumGetFloat4(SPI_getbinval(tuple, tupdesc, 8, &isnull));
-        
-        SPI_finish();
-        return true;
-    }
-    
-    SPI_finish();
-    return false;
-}
+// DatasetBounds and get_current_dataset_bounds have been moved to trace.cpp
 
 // Data loading function
 extern "C" Datum
@@ -242,9 +134,6 @@ trace_load_data(PG_FUNCTION_ARGS)
         
         // Call main implementation
         LoadResult result = trace_load_data_impl(directory, max_file_num, sample_ratio);
-        
-        // Store dataset information
-        store_dataset_info(directory, result, sample_ratio);
         
         // Create return tuple
         TupleDesc tupdesc;
@@ -278,17 +167,8 @@ trace_load_data(PG_FUNCTION_ARGS)
 extern "C" Datum
 trace_build_index(PG_FUNCTION_ARGS)
 {
-    // Try to get current dataset bounds for informational purposes
-    DatasetBounds dataset_bounds;
-    if (get_current_dataset_bounds(dataset_bounds)) {
-        elog(INFO, "Building index for dataset with bounds: X[%.2f-%.2f], Y[%.2f-%.2f], Z[%.2f-%.2f], Time[%.2f-%.2f]",
-             dataset_bounds.min_x, dataset_bounds.max_x,
-             dataset_bounds.min_y, dataset_bounds.max_y,
-             dataset_bounds.min_z, dataset_bounds.max_z,
-             dataset_bounds.min_time, dataset_bounds.max_time);
-    } else {
-        elog(INFO, "No dataset information found, building index with current GUC parameters");
-    }
+    elog(DEBUG1, "Building index with GUC parameters: chunk_max_level=%d, octree_max_level=%d, max_point_per_leaf=%d",
+         trace_chunk_max_level, trace_octree_max_level, trace_max_point_per_leaf);
     
     // Use GUC variables directly (validation is handled by GUC system)
     MemoryContext old_context = MemoryContextSwitchTo(trace_memory_context);

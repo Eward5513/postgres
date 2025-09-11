@@ -14,19 +14,30 @@ SELECT 'Preparing data and index for range queries' as test_phase;
 (1 row)
 
 
--- 加载测试数据
+-- 加载测试数据（不测试加载时间）
 \set datadir :abs_srcdir '/data'
-SELECT trace_load_data(:'datadir', 3, 1.0) as load_result;
-                     load_result                      
-------------------------------------------------------
- (3,30,0.001,116.390000,116.400900,39.900000,39.910900,5.000000,15.900000,1000.000000,3009.000000,1002,10.000000,/home/zyl/zhangteng/postgres/contrib/trace/data)
+SELECT 
+    (result).files_loaded as files_loaded,
+    (result).total_points as total_points
+FROM (
+    SELECT trace_load_data(:'datadir', 3, 1.0) as result
+) t;
+ files_loaded | total_points 
+--------------+--------------
+            3 |           30
 (1 row)
 
--- 构建索引
-SELECT trace_build_index() as index_result;
-   index_result    
--------------------
- (0.005,3,15,48)
+-- 构建索引（不测试构建时间）
+SELECT 
+    (result).chunk_count as chunk_count,
+    (result).total_octree_nodes as octree_nodes,
+    (result).total_kdtree_nodes as kdtree_nodes
+FROM (
+    SELECT trace_build_index() as result
+) t;
+ chunk_count | octree_nodes | kdtree_nodes 
+-------------+--------------+--------------
+           3 |           15 |           48
 (1 row)
 
 -- 测试2: 基本范围查询

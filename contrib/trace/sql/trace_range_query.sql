@@ -13,12 +13,23 @@ CREATE EXTENSION IF NOT EXISTS trace;
 SELECT 'Preparing data and index for range queries' as test_phase;
 
 
--- 加载测试数据
+-- 加载测试数据（不测试加载时间）
 \set datadir :abs_srcdir '/data'
-SELECT trace_load_data(:'datadir', 3, 1.0) as load_result;
+SELECT 
+    (result).files_loaded as files_loaded,
+    (result).total_points as total_points
+FROM (
+    SELECT trace_load_data(:'datadir', 3, 1.0) as result
+) t;
 
--- 构建索引
-SELECT trace_build_index() as index_result;
+-- 构建索引（不测试构建时间）
+SELECT 
+    (result).chunk_count as chunk_count,
+    (result).total_octree_nodes as octree_nodes,
+    (result).total_kdtree_nodes as kdtree_nodes
+FROM (
+    SELECT trace_build_index() as result
+) t;
 
 -- 测试2: 基本范围查询
 SELECT 'Testing basic range queries' as test_phase;

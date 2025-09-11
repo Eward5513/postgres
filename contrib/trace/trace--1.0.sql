@@ -17,20 +17,18 @@ CREATE TYPE spatiotemporal_point AS (
     speed REAL
 );
 
--- 加载结果类型
+-- 加载结果类型（时间字段已移除）
 CREATE TYPE load_result AS (
     files_loaded INTEGER,
     total_points BIGINT,
     load_time_seconds REAL,
-    -- 边界信息
+    -- 边界信息（空间边界，不包括时间）
     min_x REAL,
     max_x REAL,
     min_y REAL,
     max_y REAL,
     min_z REAL,
     max_z REAL,
-    min_time REAL,
-    max_time REAL,
     -- 统计信息
     total_file_size_bytes BIGINT,
     avg_points_per_file REAL,
@@ -53,8 +51,26 @@ CREATE TYPE knn_result AS (
 
 -- 创建存储表（仅保留当前实现使用到的表）
 
+-- 数据集信息表（单行表）
+CREATE TABLE IF NOT EXISTS trace_dataset_info (
+    dataset_path TEXT NOT NULL,
+    total_files INTEGER NOT NULL,
+    total_points BIGINT NOT NULL,
+    sample_ratio REAL NOT NULL,
+    min_x REAL NOT NULL,
+    max_x REAL NOT NULL,
+    min_y REAL NOT NULL,
+    max_y REAL NOT NULL,
+    min_z REAL NOT NULL,
+    max_z REAL NOT NULL,
+    load_duration_seconds REAL NOT NULL,
+    file_paths TEXT, -- JSON array of file paths
+    last_load_time TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+);
+
 -- 外层叶子索引（文件块归属）
-CREATE TABLE IF NOT EXISTS tsdmp_octree_leaf (
+CREATE TABLE IF NOT EXISTS trace_octree_leaf (
     dataset_path text NOT NULL,
     prefix bigint NOT NULL,
     level int NOT NULL,
@@ -69,13 +85,13 @@ CREATE TABLE IF NOT EXISTS tsdmp_octree_leaf (
 );
 
 -- 叶内自适应 octree 桶
-CREATE TABLE IF NOT EXISTS tsdmp_leaf_bucket (
+CREATE TABLE IF NOT EXISTS trace_leaf_bucket (
     dataset_path text NOT NULL,
     leaf_prefix bigint NOT NULL,
     leaf_level int NOT NULL,
     bx int NOT NULL, by int NOT NULL, bz int NOT NULL,
     level int NOT NULL,
-    offset bigint NOT NULL,
+    data_offset bigint NOT NULL,
     count int NOT NULL,
     file_path text NOT NULL,
     minx real NOT NULL, miny real NOT NULL, minz real NOT NULL,
@@ -84,13 +100,13 @@ CREATE TABLE IF NOT EXISTS tsdmp_leaf_bucket (
 );
 
 -- 桶内 kd 叶（块偏移）
-CREATE TABLE IF NOT EXISTS tsdmp_bucket_kdleaf (
+CREATE TABLE IF NOT EXISTS trace_bucket_kdleaf (
     dataset_path text NOT NULL,
     leaf_prefix bigint NOT NULL,
     leaf_level int NOT NULL,
     bx int NOT NULL, by int NOT NULL, bz int NOT NULL,
     kd_idx int NOT NULL,
-    offset bigint NOT NULL,
+    data_offset bigint NOT NULL,
     count int NOT NULL,
     file_path text NOT NULL,
     minx real NOT NULL, miny real NOT NULL, minz real NOT NULL,

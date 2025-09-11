@@ -12,8 +12,10 @@
 #include <atomic>
 #include <algorithm>
 #include <stdexcept>
+#include <iomanip>
 
 #include "../include/data_loader.h"
+#include "../include/safe_logger.h"
 
 using std::string;
 using std::vector;
@@ -33,7 +35,7 @@ using std::vector;
  *       Actual data loading begins when load_data() is called.
  */
 DataLoader::DataLoader(const string& directory, int max_file_num, float sample_ratio)
-    : original_directory(directory), max_file_num(max_file_num), sample_ratio(sample_ratio)
+    : original_directory(directory), max_file_num(max_file_num), sample_ratio(sample_ratio), total_points_loaded(0)
 {
 }
 
@@ -63,10 +65,11 @@ DataLoader::~DataLoader()
  */
 SimpleBounds DataLoader::load_data(const std::vector<std::string>& filenames)
 {
-    elog(INFO, "DataLoader::load_data - Processing %zu provided files", filenames.size());
+    elog(DEBUG1, "DataLoader::load_data - Processing %zu provided files", filenames.size());
     
-    // Create SimpleBounds array for each thread to work on
+    // Create arrays for each thread to work on
     std::vector<SimpleBounds> file_bounds_array(filenames.size());
+    std::vector<long long> file_point_counts(filenames.size(), 0);  // Thread-safe point storage
     
     // Concurrent processing of data files without locks
     std::vector<std::thread> worker_threads;
@@ -74,18 +77,19 @@ SimpleBounds DataLoader::load_data(const std::vector<std::string>& filenames)
     std::mutex progress_mutex;  // Only for logging progress
     
     for (size_t i = 0; i < filenames.size(); ++i) {
-        worker_threads.emplace_back([this, &filenames, &file_bounds_array, i, &processed_count, &progress_mutex]() {
+        worker_threads.emplace_back([this, &filenames, &file_bounds_array, &file_point_counts, i, &processed_count, &progress_mutex]() {
             try {
-                // Each thread modifies its own SimpleBounds reference
-                this->calculate_bound(filenames[i], file_bounds_array[i]);
+                // Each thread modifies its own SimpleBounds reference and stores point count
+                file_point_counts[i] = this->calculate_bound(filenames[i], file_bounds_array[i]);
                 
                 int current_count = ++processed_count;
                 std::lock_guard<std::mutex> lock(progress_mutex);
-                elog(INFO, "Processed file %zu/%zu: %s", 
-                     current_count, filenames.size(), filenames[i].c_str());
+                elog(DEBUG2, "Processed file %zu/%zu: %s (%lld points)", 
+                     current_count, filenames.size(), filenames[i].c_str(), file_point_counts[i]);
             } catch (const std::exception& e) {
                 std::lock_guard<std::mutex> lock(progress_mutex);
                 elog(ERROR, "Failed to process file %s: %s", filenames[i].c_str(), e.what());
+                file_point_counts[i] = 0;  // Set to 0 on error
             }
         });
     }
@@ -95,7 +99,14 @@ SimpleBounds DataLoader::load_data(const std::vector<std::string>& filenames)
         thread.join();
     }
     
-    elog(INFO, "Completed concurrent processing of %d files", processed_count.load());
+    // Thread-safe accumulation of point counts in main thread
+    total_points_loaded = 0;
+    for (size_t i = 0; i < file_point_counts.size(); ++i) {
+        total_points_loaded += file_point_counts[i];
+    }
+    
+    elog(DEBUG1, "Completed concurrent processing of %d files, total points: %lld", 
+         processed_count.load(), total_points_loaded);
     
     // Store filenames for internal reference
     this->filenames = filenames;
@@ -118,16 +129,14 @@ SimpleBounds DataLoader::load_data(const std::vector<std::string>& filenames)
                 final_bounds = bounds;
                 first_valid_bounds = false;
             } else {
-                // Update final bounds with this file's bounds
+                // Update final bounds with this file's bounds (excluding time)
                 final_bounds.min_x = std::min(final_bounds.min_x, bounds.min_x);
                 final_bounds.min_y = std::min(final_bounds.min_y, bounds.min_y);
                 final_bounds.min_z = std::min(final_bounds.min_z, bounds.min_z);
-                final_bounds.min_time = std::min(final_bounds.min_time, bounds.min_time);
                 
                 final_bounds.max_x = std::max(final_bounds.max_x, bounds.max_x);
                 final_bounds.max_y = std::max(final_bounds.max_y, bounds.max_y);
                 final_bounds.max_z = std::max(final_bounds.max_z, bounds.max_z);
-                final_bounds.max_time = std::max(final_bounds.max_time, bounds.max_time);
             }
         }
     }
@@ -137,13 +146,16 @@ SimpleBounds DataLoader::load_data(const std::vector<std::string>& filenames)
         return SimpleBounds();  // Return default bounds
     }
     
-    elog(INFO, "Final bounds: Longitude[%.6f-%.6f], Latitude[%.6f-%.6f], Altitude[%.3f-%.3f], Time[%.6f-%.6f]",
+    elog(DEBUG1, "Final bounds: Longitude[%.6f-%.6f], Latitude[%.6f-%.6f], Altitude[%.3f-%.3f]",
          final_bounds.min_x, final_bounds.max_x,
          final_bounds.min_y, final_bounds.max_y,
-         final_bounds.min_z, final_bounds.max_z,
-         final_bounds.min_time, final_bounds.max_time);
+         final_bounds.min_z, final_bounds.max_z);
     
     return final_bounds;
+}
+
+long long DataLoader::getTotalPoints() const {
+    return total_points_loaded;
 }
 
 
@@ -157,14 +169,14 @@ SimpleBounds DataLoader::load_data(const std::vector<std::string>& filenames)
  * @param filename Path to the data file to process
  * @param bounds Reference to bounds structure to update with calculated bounds
  */
-void DataLoader::calculate_bound(const std::string& filename, SimpleBounds& bounds)
+long long DataLoader::calculate_bound(const std::string& filename, SimpleBounds& bounds)
 {
-    elog(INFO, "Calculating bounds for file: %s", filename.c_str());
+    logger.logWithLevel("DEBUG2", "Calculating bounds for file: " + filename);
     
     std::ifstream file(filename);
     if (!file.is_open()) {
-        elog(ERROR, "Failed to open data file: %s", filename.c_str());
-        return;
+        logger.logError("Failed to open data file: " + filename);
+        return 0;  // Return 0 points for failed file processing
     }
     
     std::string line;
@@ -202,8 +214,10 @@ void DataLoader::calculate_bound(const std::string& filename, SimpleBounds& boun
         
         // Need exactly 3 values: longitude, latitude, altitude
         if (values.size() != 3) {
-            elog(WARNING, "Invalid data format at line %d in file %s: expected 3 values, got %zu", 
-                 line_count, filename.c_str(), values.size());
+            std::ostringstream warning_msg;
+            warning_msg << "Invalid data format at line " << line_count 
+                       << " in file " << filename << ": expected 3 values, got " << values.size();
+            logger.logWarning(warning_msg.str());
             continue;
         }
         
@@ -213,23 +227,20 @@ void DataLoader::calculate_bound(const std::string& filename, SimpleBounds& boun
         float time = 0.0f;           // Default time value since not provided
         
         if (first_point) {
-            // Initialize bounds with first valid point
+            // Initialize bounds with first valid point (excluding time)
             bounds.min_x = bounds.max_x = longitude;
             bounds.min_y = bounds.max_y = latitude;
             bounds.min_z = bounds.max_z = altitude;
-            bounds.min_time = bounds.max_time = time;
             first_point = false;
         } else {
-            // Update bounds
+            // Update bounds (excluding time)
             bounds.min_x = std::min(bounds.min_x, longitude);
             bounds.min_y = std::min(bounds.min_y, latitude);
             bounds.min_z = std::min(bounds.min_z, altitude);
-            bounds.min_time = std::min(bounds.min_time, time);
             
             bounds.max_x = std::max(bounds.max_x, longitude);
             bounds.max_y = std::max(bounds.max_y, latitude);
             bounds.max_z = std::max(bounds.max_z, altitude);
-            bounds.max_time = std::max(bounds.max_time, time);
         }
         
         valid_points++;
@@ -238,14 +249,17 @@ void DataLoader::calculate_bound(const std::string& filename, SimpleBounds& boun
     file.close();
     
     if (valid_points == 0) {
-        elog(WARNING, "No valid points found in file: %s", filename.c_str());
-        return;
+        logger.logWarning("No valid points found in file: " + filename);
+        return valid_points;  // Return 0 for thread-safe accumulation
     }
     
-    elog(INFO, "File %s bounds: Longitude[%.6f-%.6f], Latitude[%.6f-%.6f], Altitude[%.3f-%.3f], Points: %d",
-         filename.c_str(),
-         bounds.min_x, bounds.max_x,  // longitude range
-         bounds.min_y, bounds.max_y,  // latitude range
-         bounds.min_z, bounds.max_z,  // altitude range
-         valid_points);
+    std::ostringstream debug_msg;
+    debug_msg << "File " << filename << " bounds: "
+              << "Longitude[" << std::fixed << std::setprecision(6) << bounds.min_x << "-" << bounds.max_x << "], "
+              << "Latitude[" << bounds.min_y << "-" << bounds.max_y << "], "
+              << "Altitude[" << std::setprecision(3) << bounds.min_z << "-" << bounds.max_z << "], "
+              << "Points: " << valid_points;
+    logger.logWithLevel("DEBUG2", debug_msg.str());
+         
+    return valid_points;  // Return point count for thread-safe accumulation
 }

@@ -187,8 +187,8 @@ SPITupleTable* PostgreSQLUtils::selectBucketsIntersecting(const char* dataset_pa
     }
     StringInfoData buf; initStringInfo(&buf);
     appendStringInfo(&buf,
-        "SELECT file_path, bx,by,bz, level, leaf_prefix, leaf_level, offset, count, minx,miny,minz,maxx,maxy,maxz "
-        "FROM tsdmp_leaf_bucket WHERE dataset_path=%s AND "
+        "SELECT file_path, bx,by,bz, level, leaf_prefix, leaf_level, data_offset, count, minx,miny,minz,maxx,maxy,maxz "
+        "FROM trace_leaf_bucket WHERE dataset_path=%s AND "
         "maxx >= %f AND minx <= %f AND maxy >= %f AND miny <= %f AND maxz >= %f AND minz <= %f",
         quote_literal_cstr(dataset_path), minx, maxx, miny, maxy, minz, maxz);
     int ret = SPI_exec(buf.data, 0);
@@ -211,7 +211,7 @@ SPITupleTable* PostgreSQLUtils::selectAllKdLeaves(const char* dataset_path)
     }
     StringInfoData buf; initStringInfo(&buf);
     appendStringInfo(&buf,
-        "SELECT file_path, bx,by,bz, leaf_prefix, leaf_level, offset, count, minx,miny,minz,maxx,maxy,maxz FROM tsdmp_bucket_kdleaf WHERE dataset_path=%s",
+        "SELECT file_path, bx,by,bz, leaf_prefix, leaf_level, data_offset, count, minx,miny,minz,maxx,maxy,maxz FROM trace_bucket_kdleaf WHERE dataset_path=%s",
         quote_literal_cstr(dataset_path));
     int ret = SPI_exec(buf.data, 0);
     if (ret != SPI_OK_SELECT) {

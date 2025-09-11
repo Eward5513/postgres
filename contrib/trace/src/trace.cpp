@@ -14,6 +14,7 @@
 #include <limits>
 #include <system_error>
 #include <cstdlib>
+#include <sstream>
 
 // 第三方库
 #include "nlohmann/json.hpp"
@@ -35,63 +36,146 @@ using json = nlohmann::json;
 using std::ofstream;
 using std::ifstream;
 
-SimpleBounds global_bounds;
-std::vector<std::string> data_source_files;
-std::map<std::string, std::string> config_map;
-
-
-// Morton 辅助函数改为独立文件 morton_utils.{h,cpp}
-
-// 持久化在 index_storage.cpp 中实现
-
-// LeafMeta 结构体已在 index_storage.h 中定义
-
-// DB/磁盘辅助函数在 index_storage.{h,cpp}
-
-//
-
+// Global variables removed - data is now retrieved from database queries
 
 namespace trace {
 
+/**
+ * @brief Get current dataset bounds from database
+ * 
+ * @param bounds SimpleBounds reference to store the retrieved bounds
+ * @return true if bounds were successfully retrieved, false otherwise
+ */
+bool get_current_dataset_bounds(SimpleBounds& bounds) {
+    if (SPI_connect() != SPI_OK_CONNECT) {
+        elog(WARNING, "Failed to connect to SPI for reading dataset info");
+        return false;
+    }
+    
+    int ret = SPI_execute("SELECT min_x, max_x, min_y, max_y, min_z, max_z "
+                         "FROM trace_dataset_info LIMIT 1", true, 1);
+    
+    if (ret == SPI_OK_SELECT && SPI_processed > 0) {
+        HeapTuple tuple = SPI_tuptable->vals[0];
+        TupleDesc tupdesc = SPI_tuptable->tupdesc;
+        bool isnull;
+        
+        bounds.min_x = DatumGetFloat4(SPI_getbinval(tuple, tupdesc, 1, &isnull));
+        bounds.max_x = DatumGetFloat4(SPI_getbinval(tuple, tupdesc, 2, &isnull));
+        bounds.min_y = DatumGetFloat4(SPI_getbinval(tuple, tupdesc, 3, &isnull));
+        bounds.max_y = DatumGetFloat4(SPI_getbinval(tuple, tupdesc, 4, &isnull));
+        bounds.min_z = DatumGetFloat4(SPI_getbinval(tuple, tupdesc, 5, &isnull));
+        bounds.max_z = DatumGetFloat4(SPI_getbinval(tuple, tupdesc, 6, &isnull));
+        // Time fields removed from SimpleBounds structure
+        
+        SPI_finish();
+        return true;
+    }
+    
+    SPI_finish();
+    return false;
+}
 
+/**
+ * @brief Get dataset path and file list from database
+ * 
+ * @param dataset_path Reference to store the dataset path
+ * @param file_paths Reference to vector to store file paths
+ * @return true if data was successfully retrieved
+ */
+bool get_current_dataset_info(std::string& dataset_path, std::vector<std::string>& file_paths) {
+    if (SPI_connect() != SPI_OK_CONNECT) {
+        elog(WARNING, "Failed to connect to SPI for reading dataset info");
+        return false;
+    }
+    
+    int ret = SPI_execute("SELECT dataset_path, file_paths FROM trace_dataset_info LIMIT 1", true, 1);
+    
+    if (ret == SPI_OK_SELECT && SPI_processed > 0) {
+        HeapTuple tuple = SPI_tuptable->vals[0];
+        TupleDesc tupdesc = SPI_tuptable->tupdesc;
+        bool isnull;
+        
+        // Get dataset path
+        Datum datum_path = SPI_getbinval(tuple, tupdesc, 1, &isnull);
+        if (!isnull) {
+            char* path_cstr = TextDatumGetCString(datum_path);
+            dataset_path = std::string(path_cstr);
+        }
+        
+        // Get file paths (JSON array)
+        Datum datum_files = SPI_getbinval(tuple, tupdesc, 2, &isnull);
+        if (!isnull) {
+            char* files_cstr = TextDatumGetCString(datum_files);
+            std::string files_json(files_cstr);
+            
+            // Parse JSON array - simple implementation for CSV files
+            // Remove brackets and split by comma
+            if (files_json.length() > 2 && files_json.front() == '[' && files_json.back() == ']') {
+                files_json = files_json.substr(1, files_json.length() - 2);
+                std::stringstream ss(files_json);
+                std::string item;
+                while (std::getline(ss, item, ',')) {
+                    // Remove quotes and whitespace
+                    item.erase(0, item.find_first_not_of(" \t\""));
+                    item.erase(item.find_last_not_of(" \t\"") + 1);
+                    if (!item.empty()) {
+                        file_paths.push_back(item);
+                    }
+                }
+            }
+        }
+        
+        SPI_finish();
+        return true;
+    }
+    
+    SPI_finish();
+    return false;
+}
 
 // Type conversion functions
 SimpleBounds bounds_from_pg_args(float min_x, float min_y, float min_z, 
                                 float max_x, float max_y, float max_z,
                                 float min_time, float max_time)
 {
-    return SimpleBounds{};
+    // Time parameters are ignored since SimpleBounds no longer contains time fields
+    return SimpleBounds(min_x, min_y, min_z, max_x, max_y, max_z);
 }
 
 SimplePoint point_from_pg_args(float x, float y, float z, float time)
 {
-    return SimplePoint{};
+    SimplePoint point;
+    point.x = x;
+    point.y = y; 
+    point.z = z;
+    point.time = time;
+    return point;
 }
 
 // PostgreSQL result creation functions
 HeapTuple create_load_result_tuple(const LoadResult& result, TupleDesc tupdesc)
 {
-    Datum values[14];  // 增加到14个字段 (0-13)
-    bool nulls[14] = {false};  // 初始化所有为 false
+    Datum values[12];  // 减少到12个字段 (0-11) - 移除了时间字段
+    bool nulls[12] = {false};  // 初始化所有为 false
     
     values[0] = Int32GetDatum(result.files_loaded);
     values[1] = Int64GetDatum(result.total_points);
+    // 加载时间保持动态，但提高精度一致性
     values[2] = Float4GetDatum(result.load_time_seconds);
     
-    // 边界信息
-    values[3] = Float4GetDatum(result.min_x);
-    values[4] = Float4GetDatum(result.max_x);
-    values[5] = Float4GetDatum(result.min_y);
-    values[6] = Float4GetDatum(result.max_y);
-    values[7] = Float4GetDatum(result.min_z);
-    values[8] = Float4GetDatum(result.max_z);
-    values[9] = Float4GetDatum(result.min_time);
-    values[10] = Float4GetDatum(result.max_time);
+    // 边界信息 - 统一保持6位小数精度 (去掉时间边界)
+    values[3] = Float4GetDatum(std::round(result.min_x * 1000000.0f) / 1000000.0f);
+    values[4] = Float4GetDatum(std::round(result.max_x * 1000000.0f) / 1000000.0f);
+    values[5] = Float4GetDatum(std::round(result.min_y * 1000000.0f) / 1000000.0f);
+    values[6] = Float4GetDatum(std::round(result.max_y * 1000000.0f) / 1000000.0f);
+    values[7] = Float4GetDatum(std::round(result.min_z * 1000000.0f) / 1000000.0f);
+    values[8] = Float4GetDatum(std::round(result.max_z * 1000000.0f) / 1000000.0f);
     
     // 统计信息
-    values[11] = Int64GetDatum(result.total_file_size_bytes);
-    values[12] = Float4GetDatum(result.avg_points_per_file);
-    values[13] = CStringGetTextDatum(result.dataset_path.c_str());
+    values[9] = Int64GetDatum(result.total_file_size_bytes);
+    values[10] = Float4GetDatum(std::round(result.avg_points_per_file * 1000000.0f) / 1000000.0f);
+    values[11] = CStringGetTextDatum(result.dataset_path.c_str());
     
     return heap_form_tuple(tupdesc, values, nulls);
 }
@@ -101,10 +185,10 @@ HeapTuple create_index_result_tuple(const IndexResult& result, TupleDesc tupdesc
     Datum values[4];
     bool nulls[4] = {false, false, false, false};
     
-    values[0] = Int32GetDatum(result.total_octree_nodes);
-    values[1] = Float4GetDatum(result.index_build_time);
-    values[2] = Float4GetDatum(0.0); // index size
-    values[3] = CStringGetTextDatum("Success");
+    values[0] = Float4GetDatum(result.index_build_time);
+    values[1] = Int32GetDatum(result.chunk_count);
+    values[2] = Int32GetDatum(result.total_octree_nodes);
+    values[3] = Int32GetDatum(result.total_kdtree_nodes);
     
     return heap_form_tuple(tupdesc, values, nulls);
 }
@@ -151,11 +235,71 @@ HeapTuple create_knn_result_tuple(const KnnResult& result, TupleDesc tupdesc)
 // Configuration initialization
 void initialize_config()
 {
-    config_map["version"] = "1.0.0";
-    config_map["status"] = "initialized";
-    config_map["build_time"] = __DATE__ " " __TIME__;
+    elog(DEBUG1, "TSDMP configuration initialized - version 1.0.0, build: %s %s", __DATE__, __TIME__);
+}
+
+// Helper function to store dataset information
+static void store_dataset_info(const std::string& dataset_path, 
+                              const LoadResult& result, 
+                              float sample_ratio) {
     
-    elog(INFO, "TSDMP configuration initialized");
+    if (SPI_connect() != SPI_OK_CONNECT) {
+        elog(WARNING, "Failed to connect to SPI for storing dataset info");
+        return;
+    }
+    
+    // Create JSON array for file paths from LoadResult
+    std::string json_paths = "[";
+    for (size_t i = 0; i < result.loaded_file_paths.size(); ++i) {
+        if (i > 0) json_paths += ",";
+        json_paths += "\"" + result.loaded_file_paths[i] + "\"";
+    }
+    json_paths += "]";
+    
+    // Escape single quotes in paths
+    std::string escaped_dataset_path = dataset_path;
+    std::string escaped_json_paths = json_paths;
+    
+    // Replace single quotes with two single quotes for SQL escaping
+    size_t pos = 0;
+    while ((pos = escaped_dataset_path.find("'", pos)) != std::string::npos) {
+        escaped_dataset_path.replace(pos, 1, "''");
+        pos += 2;
+    }
+    pos = 0;
+    while ((pos = escaped_json_paths.find("'", pos)) != std::string::npos) {
+        escaped_json_paths.replace(pos, 1, "''");
+        pos += 2;
+    }
+    
+    // First, try to delete all existing records to ensure single row
+    char delete_query[256];
+    snprintf(delete_query, sizeof(delete_query), "DELETE FROM trace_dataset_info");
+    SPI_execute(delete_query, false, 0);
+    
+    // Then insert the new record (without time fields)
+    char query[4096];
+    snprintf(query, sizeof(query),
+        "INSERT INTO trace_dataset_info "
+        "(dataset_path, total_files, total_points, sample_ratio, "
+        " min_x, max_x, min_y, max_y, min_z, max_z, "
+        " load_duration_seconds, file_paths) "
+        "VALUES ('%s', %d, %ld, %.3f, %.6f, %.6f, %.6f, %.6f, %.6f, %.6f, %.3f, '%s')",
+        escaped_dataset_path.c_str(), result.files_loaded, result.total_points, sample_ratio,
+        result.min_x, result.max_x, result.min_y, result.max_y, 
+        result.min_z, result.max_z,
+        result.load_time_seconds, escaped_json_paths.c_str());
+    
+    int ret = SPI_execute(query, false, 0);
+    if (ret != SPI_OK_INSERT && ret != SPI_OK_UPDATE) {
+        elog(WARNING, "Failed to store dataset info: %d", ret);
+    } else {
+        elog(DEBUG1, "Dataset info stored: %s (%d files, %ld points, bounds: X[%.2f-%.2f], Y[%.2f-%.2f], Z[%.2f-%.2f])", 
+             dataset_path.c_str(), result.files_loaded, result.total_points,
+             result.min_x, result.max_x, result.min_y, result.max_y, result.min_z, result.max_z);
+    }
+    
+    SPI_finish();
 }
 
 // Data loading implementation
@@ -204,7 +348,7 @@ LoadResult trace_load_data_impl(const std::string& directory,
         filenames.resize(max_file_num);
     }
     
-    elog(INFO, "Found %zu data files to process", filenames.size());
+    elog(DEBUG1, "Found %zu data files to process", filenames.size());
     
     // 创建 DataLoader 实例并传入文件名数组处理，直接获取计算的边界
     DataLoader dataLoader(directory, max_file_num, sample_ratio);
@@ -235,17 +379,16 @@ LoadResult trace_load_data_impl(const std::string& directory,
         result.max_y = bounds.max_y;
         result.min_z = bounds.min_z;
         result.max_z = bounds.max_z;
-        result.min_time = bounds.min_time;
-        result.max_time = bounds.max_time;
+        // Time fields removed from LoadResult
         
-        // 估算点数（可以基于文件数量和边界范围进行更精确的估算）
-        result.total_points = filenames.size() * 1000; // 临时估算，可以改进
+        // 获取实际点数（从DataLoader）
+        result.total_points = dataLoader.getTotalPoints();
     } else {
         // 没有有效数据，使用默认值
         elog(WARNING, "No valid boundary data found, using default values");
-        result.min_x = result.min_y = result.min_z = result.min_time = 0.0f;
+        result.min_x = result.min_y = result.min_z = 0.0f;
         result.max_x = result.max_y = result.max_z = 100.0f;
-        result.max_time = 1000.0f;
+        // Time fields removed
         result.total_points = 0;
     }
     
@@ -257,21 +400,18 @@ LoadResult trace_load_data_impl(const std::string& directory,
     auto end_time = std::chrono::high_resolution_clock::now();
     result.load_time_seconds = std::chrono::duration<float>(end_time - start_time).count();
     
-    // 存储到全局变量
-    data_source_files = filenames;
-    // 设置全局边界（使用计算出的边界）
-    global_bounds = SimpleBounds(result.min_x, result.min_y, result.min_z, result.min_time,
-                                result.max_x, result.max_y, result.max_z, result.max_time);
-    // 记录数据集路径到配置，供持久化索引使用
-    config_map["dataset_path"] = directory;
+    // Global variables removed - data is now stored in database via store_dataset_info()
     
-    elog(INFO, "Loaded %d files from directory '%s' with %ld total points, "
+    elog(DEBUG1, "Loaded %d files from directory '%s' with %ld total points, "
               "bounds: Longitude[%.6f-%.6f], Latitude[%.6f-%.6f], Altitude[%.3f-%.3f], "
               "total size: %ld bytes, avg points/file: %.1f", 
          result.files_loaded, directory.c_str(), result.total_points,
          result.min_x, result.max_x, result.min_y, result.max_y, 
          result.min_z, result.max_z,
          result.total_file_size_bytes, result.avg_points_per_file);
+    
+    // Store dataset information in database
+    store_dataset_info(directory, result, sample_ratio);
     
     return result;
 }
@@ -286,21 +426,68 @@ IndexResult trace_build_index_impl(int chunk_max_level_param, int octree_max_lev
     ::octree_max_level = octree_max_level_param;
     ::max_point_per_leaf = max_point_per_leaf_param;
     
-    // Store parameters in config for logging/debugging
-    config_map["chunk_max_level"] = std::to_string(chunk_max_level_param);
-    config_map["octree_max_level"] = std::to_string(octree_max_level_param);
-    config_map["max_point_per_leaf"] = std::to_string(max_point_per_leaf_param);
+    // Get dataset bounds and file list from database
+    SimpleBounds bounds;
+    std::string dataset_path;
+    std::vector<std::string> data_source_files;
+    
+    if (!trace::get_current_dataset_bounds(bounds)) {
+        elog(ERROR, "Failed to retrieve dataset bounds from database. Please load data first.");
+        result.total_octree_nodes = 0;
+        result.total_kdtree_nodes = 0;
+        return result;
+    }
+    
+    if (!trace::get_current_dataset_info(dataset_path, data_source_files)) {
+        elog(ERROR, "Failed to retrieve dataset information from database. Please load data first.");
+        result.total_octree_nodes = 0;
+        result.total_kdtree_nodes = 0;
+        return result;
+    }
+    
+    if (data_source_files.empty()) {
+        elog(ERROR, "No data files found in dataset. Please check data loading.");
+        result.total_octree_nodes = 0;
+        result.total_kdtree_nodes = 0;
+        return result;
+    }
+    
+    elog(DEBUG1, "Building index for dataset '%s' with %zu files, bounds: X[%.2f-%.2f], Y[%.2f-%.2f], Z[%.2f-%.2f]",
+         dataset_path.c_str(), data_source_files.size(),
+         bounds.min_x, bounds.max_x, bounds.min_y, bounds.max_y, bounds.min_z, bounds.max_z);
     
     // 使用 IndexBuilder 完成构建与持久化
     auto build_start = std::chrono::high_resolution_clock::now();
     IndexBuilder::Params p{ octree_max_level_param, max_point_per_leaf_param, 8192, 6, 4096 };
-    IndexBuilder builder(config_map["dataset_path"], global_bounds, data_source_files, p);
+    IndexBuilder builder(dataset_path, bounds, data_source_files, p);
     builder.build_all();
     auto build_end = std::chrono::high_resolution_clock::now();
     result.index_build_time = std::chrono::duration<float>(build_end - build_start).count();
     result.chunk_count = (int)data_source_files.size();
-    result.total_octree_nodes = 0;
-    result.total_kdtree_nodes = 0;
+    
+    // Query actual counts from database
+    if (SPI_connect() == SPI_OK_CONNECT) {
+        // Count octree nodes
+        std::string octree_sql = std::string("SELECT COUNT(*) FROM trace_octree_leaf WHERE dataset_path = ") + sql_quote_literal(dataset_path);
+        int ret = SPI_execute(octree_sql.c_str(), true, 0);
+        if (ret == SPI_OK_SELECT && SPI_processed > 0) {
+            char *count_str = SPI_getvalue(SPI_tuptable->vals[0], SPI_tuptable->tupdesc, 1);
+            result.total_octree_nodes = count_str ? atoi(count_str) : 0;
+        }
+        
+        // Count kdtree nodes
+        std::string kdtree_sql = std::string("SELECT COUNT(*) FROM trace_bucket_kdleaf WHERE dataset_path = ") + sql_quote_literal(dataset_path);
+        ret = SPI_execute(kdtree_sql.c_str(), true, 0);
+        if (ret == SPI_OK_SELECT && SPI_processed > 0) {
+            char *count_str = SPI_getvalue(SPI_tuptable->vals[0], SPI_tuptable->tupdesc, 1);
+            result.total_kdtree_nodes = count_str ? atoi(count_str) : 0;
+        }
+        
+        SPI_finish();
+    } else {
+        result.total_octree_nodes = 0;
+        result.total_kdtree_nodes = 0;
+    }
     
     return result;
 }
@@ -310,8 +497,16 @@ std::vector<SimplePoint> trace_range_query_impl(const SimpleBounds& bounds, int 
 {
     std::vector<SimplePoint> results;
     
+    // Get dataset path from database
+    std::string dataset_path;
+    std::vector<std::string> file_paths; // Not used in query but needed for function
+    
+    if (!trace::get_current_dataset_info(dataset_path, file_paths)) {
+        elog(WARNING, "Failed to retrieve dataset information for range query");
+        return results;
+    }
+    
     // 使用桶（叶内 octree）粗筛，直接按 bucket 偏移读取
-    const std::string dataset_path = config_map["dataset_path"];
     auto buckets = db_query_buckets_intersecting(dataset_path, bounds);
     for (const auto &bmeta : buckets) {
         read_points_block_filter_bounds(bmeta.file_path, bmeta.offset, bmeta.count, bounds, data_type_mask, results);
@@ -330,8 +525,16 @@ std::vector<std::pair<SimplePoint, float>> trace_knn_query_impl(const SimplePoin
     if (k <= 0) return results;
     if ((data_type_mask & TRACE_TYPE_POINTCLOUD) == 0) return results;
 
+    // Get dataset path from database
+    std::string dataset_path;
+    std::vector<std::string> file_paths; // Not used in query but needed for function
+    
+    if (!trace::get_current_dataset_info(dataset_path, file_paths)) {
+        elog(WARNING, "Failed to retrieve dataset information for kNN query");
+        return results;
+    }
+
     // 使用 kd 叶（桶内二分）的包围盒做粗序，从近到远读取块更新堆
-    const std::string dataset_path = config_map["dataset_path"];
     auto kdleaves = db_query_all_kdleaves(dataset_path);
     std::vector<std::pair<float,size_t>> order;
     order.reserve(kdleaves.size());

@@ -10,7 +10,7 @@
 #include "../include/index_storage.h"
 #include "../include/morton_utils.h"
 
-extern SimpleBounds global_bounds; // used for compatibility
+// Global bounds variable removed - bounds are now passed via constructor
 
 // utilities from trace.cpp mirrored here (compact)
 
@@ -36,7 +36,11 @@ void IndexBuilder::scan_points_(){
             if (line.empty()) { ++row; continue; }
             size_t p0=0,p1=line.find(','); if (p1==std::string::npos){ ++row; continue; } float x=std::strtof(line.substr(p0,p1-p0).c_str(), nullptr);
             p0=p1+1; p1=line.find(',',p0); if (p1==std::string::npos){ ++row; continue; } float y=std::strtof(line.substr(p0,p1-p0).c_str(), nullptr);
-            p0=p1+1; p1=line.find(',',p0); if (p1==std::string::npos){ ++row; continue; } float z=std::strtof(line.substr(p0,p1-p0).c_str(), nullptr);
+            p0 = p1 + 1;
+            p1 = line.find(',', p0);
+            std::string ztoken = (p1 == std::string::npos) ? line.substr(p0) : line.substr(p0, p1 - p0);
+            if (ztoken.empty()) { ++row; continue; }
+            float z = std::strtof(ztoken.c_str(), nullptr);
             uint32_t xi=q21_(x,bounds_.min_x,bounds_.max_x), yi=q21_(y,bounds_.min_y,bounds_.max_y), zi=q21_(z,bounds_.min_z,bounds_.max_z);
             postings_.push_back(Posting{ morton3_(xi,yi,zi), x,y,z, fid, row }); ++row;
         }
