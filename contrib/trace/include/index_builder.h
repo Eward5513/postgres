@@ -26,7 +26,8 @@ public:
                  const Params &params);
 
     // 执行完整构建：扫描原始CSV -> Morton排序 -> 外层octree叶 -> 按叶持久化(自适应内层octree + kd叶)
-    void build_all();
+    // 通过 out_result 返回统计：octree 叶数量、kd 叶数量
+    void build_all(IndexResult &out_result);
 
 private:
     std::string dataset_path_;
@@ -50,7 +51,7 @@ private:
     void scan_points_();
     void sort_by_morton_();
     void bulkload_octree_();
-    void persist_leaves_();
+    void persist_leaves_(int &octree_leaf_count, int &kd_leaf_count);
 
     // helpers
     static uint64_t morton3_(uint32_t xi, uint32_t yi, uint32_t zi);

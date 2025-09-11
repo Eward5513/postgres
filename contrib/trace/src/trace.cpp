@@ -458,37 +458,13 @@ IndexResult trace_build_index_impl(int chunk_max_level_param, int octree_max_lev
     
     // 使用 IndexBuilder 完成构建与持久化
     auto build_start = std::chrono::high_resolution_clock::now();
-    IndexBuilder::Params p{ octree_max_level_param, max_point_per_leaf_param, 8192, 6, 4096 };
+    IndexBuilder::Params p{ octree_max_level_param, max_point_per_leaf_param, trace_bucket_max_points, 6, trace_kd_leaf_max_points };
     IndexBuilder builder(dataset_path, bounds, data_source_files, p);
-    builder.build_all();
+    builder.build_all(result);
     auto build_end = std::chrono::high_resolution_clock::now();
     result.index_build_time = std::chrono::duration<float>(build_end - build_start).count();
     result.chunk_count = (int)data_source_files.size();
-    
-    // Query actual counts from database
-    if (SPI_connect() == SPI_OK_CONNECT) {
-        // Count octree nodes
-        std::string octree_sql = std::string("SELECT COUNT(*) FROM trace_octree_leaf WHERE dataset_path = ") + sql_quote_literal(dataset_path);
-        int ret = SPI_execute(octree_sql.c_str(), true, 0);
-        if (ret == SPI_OK_SELECT && SPI_processed > 0) {
-            char *count_str = SPI_getvalue(SPI_tuptable->vals[0], SPI_tuptable->tupdesc, 1);
-            result.total_octree_nodes = count_str ? atoi(count_str) : 0;
-        }
-        
-        // Count kdtree nodes
-        std::string kdtree_sql = std::string("SELECT COUNT(*) FROM trace_bucket_kdleaf WHERE dataset_path = ") + sql_quote_literal(dataset_path);
-        ret = SPI_execute(kdtree_sql.c_str(), true, 0);
-        if (ret == SPI_OK_SELECT && SPI_processed > 0) {
-            char *count_str = SPI_getvalue(SPI_tuptable->vals[0], SPI_tuptable->tupdesc, 1);
-            result.total_kdtree_nodes = count_str ? atoi(count_str) : 0;
-        }
-        
-        SPI_finish();
-    } else {
-        result.total_octree_nodes = 0;
-        result.total_kdtree_nodes = 0;
-    }
-    
+
     return result;
 }
 

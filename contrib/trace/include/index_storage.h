@@ -36,12 +36,13 @@ struct BuildPoint { float x,y,z; uint32_t fid,row; };
 void persist_prepare_dataset(const std::string &dataset_path);
 
 // 持久化单个叶子：写叶子文件，写三层索引（叶子、叶内octree桶自适应、桶内kd叶）到数据库
-void persist_leaf_index(const std::string &dataset_path,
+int persist_leaf_index(const std::string &dataset_path,
                         uint64_t leaf_prefix, int leaf_level,
                         uint32_t xi_cell, uint32_t yi_cell, uint32_t zi_cell,
                         float minx, float miny, float minz, float maxx, float maxy, float maxz,
                         const std::vector<BuildPoint> &points,
-                        int bucket_max_points, int max_inner_levels, int kd_leaf_max_points);
+                        int bucket_max_points, int max_inner_levels, int kd_leaf_max_points,
+                        int &out_bucket_count);
 
 // 叶子 bbox 到点的最小距离平方
 float bbox_point_min_dist2(const LeafMeta &m, float x, float y, float z);

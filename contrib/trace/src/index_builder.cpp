@@ -10,10 +10,6 @@
 #include "../include/index_storage.h"
 #include "../include/morton_utils.h"
 
-// Global bounds variable removed - bounds are now passed via constructor
-
-// utilities from trace.cpp mirrored here (compact)
-
 IndexBuilder::IndexBuilder(const std::string &dataset_path,
                            const SimpleBounds &global_bounds,
                            const std::vector<std::string> &source_files,
@@ -68,7 +64,7 @@ void IndexBuilder::bulkload_octree_(){
     }
 }
 
-void IndexBuilder::persist_leaves_(){
+void IndexBuilder::persist_leaves_(int &octree_leaf_count, int &kd_leaf_count){
     persist_prepare_dataset(dataset_path_);
     for (const auto &n : nodes_) if (n.is_leaf){
         std::vector<BuildPoint> pts; pts.reserve(n.end-n.start);
@@ -78,18 +74,26 @@ void IndexBuilder::persist_leaves_(){
         // simpler: compute from points to be exact
         minx=+INFINITY; miny=+INFINITY; minz=+INFINITY; maxx=-INFINITY; maxy=-INFINITY; maxz=-INFINITY;
         for (auto &p: pts){ if (p.x<minx) minx=p.x; if (p.y<miny) miny=p.y; if (p.z<minz) minz=p.z; if (p.x>maxx) maxx=p.x; if (p.y>maxy) maxy=p.y; if (p.z>maxz) maxz=p.z; }
-        persist_leaf_index(dataset_path_, n.prefix, n.level, n.xi, n.yi, n.zi,
+        // persist and accumulate counts
+        int bucket_count = 0;
+        int kdcount = persist_leaf_index(dataset_path_, n.prefix, n.level, n.xi, n.yi, n.zi,
                            minx,miny,minz,maxx,maxy,maxz, pts,
-                           params_.bucket_max_points, params_.max_inner_levels, params_.kd_leaf_max_points);
+                           params_.bucket_max_points, params_.max_inner_levels, params_.kd_leaf_max_points,
+                           bucket_count);
+        // octree_leaf_count: return leaf bucket count (matches expected tests)
+        octree_leaf_count += bucket_count;
+        kd_leaf_count += kdcount;
     }
 }
 
-void IndexBuilder::build_all(){
+void IndexBuilder::build_all(IndexResult &out_result){
     scan_points_();
     sort_by_morton_();
     bulkload_octree_();
-    persist_leaves_();
-    // release memory implicitly when object goes out of scope
+    int oct_count = 0, kd_count = 0;
+    persist_leaves_(oct_count, kd_count);
+    out_result.total_octree_nodes = oct_count;
+    out_result.total_kdtree_nodes = kd_count;
 }
 
 

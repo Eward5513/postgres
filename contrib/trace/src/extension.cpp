@@ -23,6 +23,8 @@ MemoryContext trace_query_context = NULL;
 static int trace_chunk_max_level = 5;      // Default value
 static int trace_octree_max_level = 10;    // Default value  
 static int trace_max_point_per_leaf = 1000; // Default value
+int trace_bucket_max_points = 8192;  // New GUC for bucket threshold (external linkage)
+int trace_kd_leaf_max_points = 4096; // New GUC for kd-leaf threshold (external linkage)
 
 // Static variables
 static bool trace_initialized = false;
@@ -86,6 +88,32 @@ _PG_init(void)
                             NULL,   // check_hook
                             NULL,   // assign_hook
                             NULL);  // show_hook
+    
+    DefineCustomIntVariable("trace.bucket_max_points",
+                            "Sets the maximum points per inner bucket.",
+                            "Controls inner octree bucket size. Range: 1-100000.",
+                            &trace_bucket_max_points,
+                            8192,   // boot value (default)
+                            1,      // min value
+                            100000, // max value
+                            PGC_USERSET,
+                            0,
+                            NULL,
+                            NULL,
+                            NULL);
+    
+    DefineCustomIntVariable("trace.kd_leaf_max_points",
+                            "Sets the maximum points per kd leaf.",
+                            "Controls kd-leaf size inside buckets. Range: 1-100000.",
+                            &trace_kd_leaf_max_points,
+                            4096,   // boot value (default)
+                            1,      // min value
+                            100000, // max value
+                            PGC_USERSET,
+                            0,
+                            NULL,
+                            NULL,
+                            NULL);
     
     trace_initialized = true;
     

@@ -46,6 +46,19 @@
 #define TRACE_TYPE_TRAJECTORY    0x02    ///< Trajectory data (ordered sequences of points)
 #define TRACE_TYPE_MESH         0x04    ///< Mesh data (3D surfaces and volumes)
 
+// ============================================================================
+// Global GUC Variables
+// ============================================================================
+
+/**
+ * @brief GUC variables for index building parameters
+ * 
+ * These variables are defined in extension.cpp and can be modified using
+ * SET commands in SQL.
+ */
+extern int trace_bucket_max_points;  ///< Maximum points per inner bucket
+extern int trace_kd_leaf_max_points; ///< Maximum points per kd leaf
+
 /**
  * @brief Data format enumeration for file loading
  * 

@@ -25,6 +25,11 @@ FROM (
 -- 测试2: 索引构建测试
 SELECT 'Testing index building' as test_phase;
 
+-- 设置GUC参数以获得更细粒度的树结构
+SET trace.max_point_per_leaf = 10;
+SET trace.bucket_max_points = 4;
+SET trace.kd_leaf_max_points = 2;
+
 -- 构建索引（不测试构建时间）
 SELECT 
     (result).chunk_count as chunk_count,
@@ -77,6 +82,11 @@ ORDER BY level;
 
 -- 测试5: 多次构建测试
 SELECT 'Testing multiple index builds' as test_phase;
+
+-- 保持相同的GUC设置
+SET trace.max_point_per_leaf = 10;
+SET trace.bucket_max_points = 4;
+SET trace.kd_leaf_max_points = 2;
 
 -- 再次构建索引（应该清理并重建，不测试构建时间）
 SELECT 

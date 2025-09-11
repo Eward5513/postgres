@@ -74,12 +74,13 @@ static inline void update_bbox(float x, float y, float z,
     if (z < minz) minz = z; if (z > maxz) maxz = z;
 }
 
-void persist_leaf_index(const std::string &dataset_path,
+int persist_leaf_index(const std::string &dataset_path,
                         uint64_t leaf_prefix, int leaf_level,
                         uint32_t xi_cell, uint32_t yi_cell, uint32_t zi_cell,
                         float minx, float miny, float minz, float maxx, float maxy, float maxz,
                         const std::vector<BuildPoint> &points,
-                        int bucket_max_points, int max_inner_levels, int kd_leaf_max_points)
+                        int bucket_max_points, int max_inner_levels, int kd_leaf_max_points,
+                        int &out_bucket_count)
 {
     // 插入叶子行
     if (SPI_connect() != SPI_OK_CONNECT) {
@@ -156,6 +157,8 @@ void persist_leaf_index(const std::string &dataset_path,
         elog(ERROR, "SPI_connect failed");
     }
 
+    int total_kd_leaves = 0;
+    out_bucket_count = 0;
     for (auto &bk : final_buckets) {
         int bx = bk.bx, by = bk.by, bz = bk.bz;
         auto &pts = bk.pts;
@@ -199,6 +202,7 @@ void persist_leaf_index(const std::string &dataset_path,
         };
 
         build_kd(0, pts.size());
+        total_kd_leaves += (int)kd_leaves.size();
 
         // 插入桶行
         float bminx=bk.bminx,bminy=bk.bminy,bminz=bk.bminz,bmaxx=bk.bmaxx,bmaxy=bk.bmaxy,bmaxz=bk.bmaxz;
@@ -212,6 +216,7 @@ void persist_leaf_index(const std::string &dataset_path,
                  format_float_for_sql(bminx).c_str(), format_float_for_sql(bminy).c_str(), format_float_for_sql(bminz).c_str(),
                  format_float_for_sql(bmaxx).c_str(), format_float_for_sql(bmaxy).c_str(), format_float_for_sql(bmaxz).c_str());
         SPI_execute(bsql, false, 0);
+        out_bucket_count += 1;
 
         // 插入 kd 叶行
         for (int ki=0; ki<(int)kd_leaves.size(); ++ki) {
@@ -230,6 +235,7 @@ void persist_leaf_index(const std::string &dataset_path,
 
     SPI_finish();
     ofs.close();
+    return total_kd_leaves;
 }
 
 std::vector<LeafMeta> db_query_leaves_intersecting(const std::string &dataset_path, const SimpleBounds &b)
