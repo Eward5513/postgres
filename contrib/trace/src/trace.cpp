@@ -38,6 +38,9 @@ using std::ifstream;
 
 // Global variables removed - data is now retrieved from database queries
 
+// Function declarations
+void suggest_guc_parameters(long long total_points);
+
 namespace trace {
 
 /**
@@ -212,18 +215,18 @@ HeapTuple create_spatiotemporal_point_tuple(const SimplePoint& point, TupleDesc 
 
 HeapTuple create_knn_result_tuple(const KnnResult& result, TupleDesc tupdesc)
 {
-    Datum values[9];
-    bool nulls[9] = {false, false, false, false, false, false, false, false, false};
+    // Return a flattened tuple with distance + point fields (without time_stamp)
+    Datum values[8];
+    bool nulls[8] = {false, false, false, false, false, false, false, false};
     
     values[0] = Float4GetDatum(result.distance);
     values[1] = Float4GetDatum(result.point.x);
     values[2] = Float4GetDatum(result.point.y);
     values[3] = Float4GetDatum(result.point.z);
-    values[4] = Float4GetDatum(result.point.time);
-    values[5] = Int32GetDatum(result.point.data_type);
-    values[6] = Int32GetDatum(result.point.fid);
-    values[7] = Int32GetDatum(result.point.pid);
-    values[8] = Int32GetDatum(result.point.foreign_key);
+    values[4] = Int16GetDatum((int16)result.point.data_type);
+    values[5] = Int32GetDatum(result.point.fid);
+    values[6] = Int32GetDatum(result.point.pid);
+    values[7] = Int16GetDatum((int16)result.point.foreign_key); // user_id
     
     return heap_form_tuple(tupdesc, values, nulls);
 }
@@ -300,6 +303,57 @@ static void store_dataset_info(const std::string& dataset_path,
     }
     
     SPI_finish();
+}
+
+// Suggest optimal GUC parameters based on data size
+void suggest_guc_parameters(long long total_points)
+{
+    int suggested_max_point_per_leaf, suggested_bucket_max_points, suggested_kd_leaf_max_points;
+    
+    if (total_points < 1000) {
+        // Small dataset (< 1K points)
+        suggested_max_point_per_leaf = 50;
+        suggested_bucket_max_points = 8;
+        suggested_kd_leaf_max_points = 4;
+    } else if (total_points < 10000) {
+        // Medium dataset (1K - 10K points)
+        suggested_max_point_per_leaf = 200;
+        suggested_bucket_max_points = 16;
+        suggested_kd_leaf_max_points = 8;
+    } else if (total_points < 100000) {
+        // Large dataset (10K - 100K points)
+        suggested_max_point_per_leaf = 1000;
+        suggested_bucket_max_points = 64;
+        suggested_kd_leaf_max_points = 16;
+    } else if (total_points < 1000000) {
+        // Very large dataset (100K - 1M points)
+        suggested_max_point_per_leaf = 5000;
+        suggested_bucket_max_points = 256;
+        suggested_kd_leaf_max_points = 32;
+    } else if (total_points < 10000000) {
+        // Huge dataset (1M - 10M points)
+        suggested_max_point_per_leaf = 10000;
+        suggested_bucket_max_points = 512;
+        suggested_kd_leaf_max_points = 32;
+    } else {
+        // Massive dataset (10M+ points)
+        suggested_max_point_per_leaf = 20000;
+        suggested_bucket_max_points = 1024;
+        suggested_kd_leaf_max_points = 64;
+    }
+    
+    // Calculate estimated index structure sizes
+    int estimated_outer_leaves = (int)((total_points + suggested_max_point_per_leaf - 1) / suggested_max_point_per_leaf);
+    int estimated_buckets = (int)((total_points + suggested_bucket_max_points - 1) / suggested_bucket_max_points);
+    int estimated_kd_leaves = (int)((total_points + suggested_kd_leaf_max_points - 1) / suggested_kd_leaf_max_points);
+    
+    elog(NOTICE, "=== Suggested GUC Parameters for %lld data points ===", total_points);
+    elog(NOTICE, "SET trace.max_point_per_leaf = %d;", suggested_max_point_per_leaf);
+    elog(NOTICE, "SET trace.bucket_max_points = %d;", suggested_bucket_max_points);
+    elog(NOTICE, "SET trace.kd_leaf_max_points = %d;", suggested_kd_leaf_max_points);
+    elog(NOTICE, "Estimated index structure: %d outer leaves, %d buckets, %d kd leaves", 
+         estimated_outer_leaves, estimated_buckets, estimated_kd_leaves);
+    elog(NOTICE, "====================================================");
 }
 
 // Data loading implementation
@@ -413,6 +467,9 @@ LoadResult trace_load_data_impl(const std::string& directory,
     // Store dataset information in database
     store_dataset_info(directory, result, sample_ratio);
     
+    // Suggest optimal GUC parameters based on data size
+    suggest_guc_parameters(result.total_points);
+    
     return result;
 }
 
@@ -463,7 +520,6 @@ IndexResult trace_build_index_impl(int chunk_max_level_param, int octree_max_lev
     builder.build_all(result);
     auto build_end = std::chrono::high_resolution_clock::now();
     result.index_build_time = std::chrono::duration<float>(build_end - build_start).count();
-    result.chunk_count = (int)data_source_files.size();
 
     return result;
 }

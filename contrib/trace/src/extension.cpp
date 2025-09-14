@@ -80,9 +80,9 @@ _PG_init(void)
                             "Sets the maximum points per leaf node.",
                             "Controls point density in leaf nodes. Range: 1-10000.",
                             &trace_max_point_per_leaf,
-                            1000,   // boot value (default)
+                            20000,   // boot value (default)
                             1,      // min value
-                            10000,  // max value
+                            20000,  // max value
                             PGC_USERSET,  // can be set by user
                             0,      // flags
                             NULL,   // check_hook
@@ -93,7 +93,7 @@ _PG_init(void)
                             "Sets the maximum points per inner bucket.",
                             "Controls inner octree bucket size. Range: 1-100000.",
                             &trace_bucket_max_points,
-                            8192,   // boot value (default)
+                            1024,   // boot value (default)
                             1,      // min value
                             100000, // max value
                             PGC_USERSET,
@@ -106,7 +106,7 @@ _PG_init(void)
                             "Sets the maximum points per kd leaf.",
                             "Controls kd-leaf size inside buckets. Range: 1-100000.",
                             &trace_kd_leaf_max_points,
-                            4096,   // boot value (default)
+                            32,   // boot value (default)
                             1,      // min value
                             100000, // max value
                             PGC_USERSET,

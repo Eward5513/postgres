@@ -22,6 +22,12 @@ SELECT
 FROM (
     SELECT trace_load_data(:'datadir', 3, 1.0) as result
 ) t;
+NOTICE:  === Suggested GUC Parameters for 30 data points ===
+NOTICE:  SET trace.max_point_per_leaf = 50;
+NOTICE:  SET trace.bucket_max_points = 8;
+NOTICE:  SET trace.kd_leaf_max_points = 4;
+NOTICE:  Estimated index structure: 1 outer leaves, 4 buckets, 8 kd leaves
+NOTICE:  ====================================================
  files_loaded | total_points 
 --------------+--------------
             3 |           30
@@ -48,7 +54,7 @@ FROM (
 ) t;
  chunk_count | octree_nodes | kdtree_nodes 
 -------------+--------------+--------------
-           3 |           11 |           17
+           4 |           11 |           17
 (1 row)
 
 -- 测试3: 验证索引表数据
@@ -158,7 +164,7 @@ FROM (
 ) t;
  chunk_count | octree_nodes | kdtree_nodes 
 -------------+--------------+--------------
-           3 |           11 |           17
+           4 |           11 |           17
 (1 row)
 
 -- 验证重建后的数据一致性

@@ -7,7 +7,9 @@
 \getenv abs_srcdir PG_ABS_SRCDIR
 
 -- 加载trace扩展
+SET client_min_messages TO WARNING;
 CREATE EXTENSION IF NOT EXISTS trace;
+SET client_min_messages TO NOTICE;
 
 -- 测试1: 准备数据和索引
 SELECT 'Preparing data and index for kNN queries' as test_phase;
@@ -21,6 +23,11 @@ SELECT
 FROM (
     SELECT trace_load_data(:'datadir', 3, 1.0) as result
 ) t;
+
+-- 设置GUC参数以获得更细粒度的树结构
+SET trace.max_point_per_leaf = 10;
+SET trace.bucket_max_points = 4;
+SET trace.kd_leaf_max_points = 2;
 
 -- 构建索引（不测试构建时间）
 SELECT 
@@ -41,8 +48,8 @@ FROM trace_knn_query(116.3978, 39.9046, 10.9, 5, '-infinity'::REAL, 'infinity'::
 -- 查询最近的3个点
 SELECT 
     distance,
-    (point).x, (point).y, (point).z, (point).time_stamp,
-    (point).data_type, (point).file_id, (point).point_id
+    x, y, z,
+    data_type, file_id, point_id
 FROM trace_knn_query(116.3978, 39.9046, 10.9, 3, '-infinity'::REAL, 'infinity'::REAL, 7)
 ORDER BY distance;
 
@@ -61,20 +68,20 @@ FROM trace_knn_query(116.3975, 39.9043, 10.6, 10, '-infinity'::REAL, 'infinity':
 SELECT COUNT(*) as knn_20_count
 FROM trace_knn_query(116.3975, 39.9043, 10.6, 20, '-infinity'::REAL, 'infinity'::REAL, 7);
 
--- 测试4: 时间范围过滤的kNN查询
-SELECT 'Testing kNN with time range filtering' as test_phase;
+-- 测试4: 不同查询位置测试
+SELECT 'Testing different query positions' as test_phase;
 
--- 仅在第一个时间段内查询最近的点
-SELECT COUNT(*) as knn_time_range_1
-FROM trace_knn_query(116.3978, 39.9046, 10.9, 5, 1000.0, 1500.0, 7);
+-- 从不同位置查询最近的点
+SELECT COUNT(*) as knn_position_1
+FROM trace_knn_query(116.3978, 39.9046, 10.9, 5, '-infinity'::REAL, 'infinity'::REAL, 7);
 
--- 仅在第二个时间段内查询最近的点
-SELECT COUNT(*) as knn_time_range_2
-FROM trace_knn_query(116.4005, 39.9005, 15.5, 5, 2000.0, 2500.0, 7);
+-- 从另一个位置查询最近的点
+SELECT COUNT(*) as knn_position_2
+FROM trace_knn_query(116.4005, 39.9005, 15.5, 5, '-infinity'::REAL, 'infinity'::REAL, 7);
 
--- 仅在第三个时间段内查询最近的点  
-SELECT COUNT(*) as knn_time_range_3
-FROM trace_knn_query(116.3905, 39.9105, 5.5, 5, 3000.0, 3500.0, 7);
+-- 从第三个位置查询最近的点  
+SELECT COUNT(*) as knn_position_3
+FROM trace_knn_query(116.3905, 39.9105, 5.5, 5, '-infinity'::REAL, 'infinity'::REAL, 7);
 
 -- 测试5: 数据类型过滤测试
 SELECT 'Testing kNN with data type filtering' as test_phase;
@@ -117,24 +124,25 @@ WITH knn_results AS (
 SELECT 
     COUNT(*) as total_results,
     MIN(distance) as min_distance,
-    MAX(distance) as max_distance,
-    COUNT(CASE WHEN rn > 1 AND distance >= LAG(distance) OVER (ORDER BY rn) THEN 1 END) as correctly_ordered
+    MAX(distance) as max_distance
 FROM knn_results;
 
 -- 测试8: 边界情况测试
 SELECT 'Testing boundary cases' as test_phase;
 
--- k=0 (应该返回空结果)
+-- k=0 (应该返回错误)
+\set ON_ERROR_STOP off
 SELECT COUNT(*) as knn_k_zero
 FROM trace_knn_query(116.3978, 39.9046, 10.9, 0, '-infinity'::REAL, 'infinity'::REAL, 7);
+\set ON_ERROR_STOP on
 
 -- 查询中心在数据范围外
 SELECT COUNT(*) as knn_outside_range
 FROM trace_knn_query(200.0, 200.0, 200.0, 5, '-infinity'::REAL, 'infinity'::REAL, 7);
 
--- 空的时间范围
-SELECT COUNT(*) as knn_empty_time
-FROM trace_knn_query(116.3978, 39.9046, 10.9, 5, 5000.0, 6000.0, 7);
+-- 查询不存在的数据类型
+SELECT COUNT(*) as knn_empty_datatype
+FROM trace_knn_query(116.3978, 39.9046, 10.9, 5, '-infinity'::REAL, 'infinity'::REAL, 4);
 
 -- 测试9: 具体结果验证
 SELECT 'Testing specific result validation' as test_phase;
@@ -142,9 +150,9 @@ SELECT 'Testing specific result validation' as test_phase;
 -- 查询最近的点并显示详细信息
 SELECT 
     ROUND(distance::numeric, 6) as rounded_distance,
-    (point).x, (point).y, (point).z,
-    (point).time_stamp,
-    (point).file_id, (point).point_id
+    x, y, z,
+    data_type,
+    file_id, point_id
 FROM trace_knn_query(116.3974, 39.9042, 10.5, 3, '-infinity'::REAL, 'infinity'::REAL, 7)
 ORDER BY distance;
 

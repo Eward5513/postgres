@@ -90,6 +90,14 @@ void IndexBuilder::build_all(IndexResult &out_result){
     scan_points_();
     sort_by_morton_();
     bulkload_octree_();
+    // Count outer (top-level) octree leaf nodes as chunk count
+    int outer_leaf_count = 0;
+    for (const auto &node : nodes_) {
+        if (node.is_leaf) {
+            ++outer_leaf_count;
+        }
+    }
+    out_result.chunk_count = outer_leaf_count;
     int oct_count = 0, kd_count = 0;
     persist_leaves_(oct_count, kd_count);
     out_result.total_octree_nodes = oct_count;

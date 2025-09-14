@@ -223,10 +223,10 @@ int persist_leaf_index(const std::string &dataset_path,
             const auto &kl = kd_leaves[ki];
             char ksql[1024];
             snprintf(ksql, sizeof(ksql),
-                     "INSERT INTO trace_bucket_kdleaf(dataset_path,leaf_prefix,leaf_level,bx,by,bz,kd_idx,data_offset,count,file_path,minx,miny,minz,maxx,maxy,maxz) "
-                     "VALUES (%s, %lld, %d, %d, %d, %d, %d, %lld, %u, %s, %s, %s, %s, %s, %s, %s)",
+                     "INSERT INTO trace_bucket_kdleaf(dataset_path,leaf_prefix,leaf_level,bx,by,bz,level,kd_idx,data_offset,count,file_path,minx,miny,minz,maxx,maxy,maxz) "
+                     "VALUES (%s, %lld, %d, %d, %d, %d, %d, %d, %lld, %u, %s, %s, %s, %s, %s, %s, %s)",
                      sql_quote_literal(dataset_path).c_str(), (long long)leaf_prefix, leaf_level,
-                     bx, by, bz, ki, (long long)kl.offset, (unsigned)kl.count, sql_quote_literal(file_path.string()).c_str(),
+                     bx, by, bz, bk.level, ki, (long long)kl.offset, (unsigned)kl.count, sql_quote_literal(file_path.string()).c_str(),
                      format_float_for_sql(kl.minx).c_str(), format_float_for_sql(kl.miny).c_str(), format_float_for_sql(kl.minz).c_str(),
                      format_float_for_sql(kl.maxx).c_str(), format_float_for_sql(kl.maxy).c_str(), format_float_for_sql(kl.maxz).c_str());
             SPI_execute(ksql, false, 0);
@@ -429,7 +429,7 @@ std::vector<KdLeafMeta> db_query_all_kdleaves(const std::string &dataset_path)
 {
     std::vector<KdLeafMeta> metas;
     if (SPI_connect() != SPI_OK_CONNECT) { elog(ERROR, "SPI_connect failed"); }
-    std::string sql = std::string("SELECT file_path, bx,by,bz, leaf_prefix, leaf_level, data_offset, count, minx,miny,minz,maxx,maxy,maxz FROM trace_bucket_kdleaf WHERE dataset_path=") + sql_quote_literal(dataset_path);
+    std::string sql = std::string("SELECT file_path, bx,by,bz, level, leaf_prefix, leaf_level, data_offset, count, minx,miny,minz,maxx,maxy,maxz FROM trace_bucket_kdleaf WHERE dataset_path=") + sql_quote_literal(dataset_path);
     int rc = SPI_execute(sql.c_str(), true, 0);
     if (rc != SPI_OK_SELECT) { SPI_finish(); elog(ERROR, "SPI_execute select failed"); }
     SPITupleTable *tuptable = SPI_tuptable; TupleDesc tupdesc = tuptable->tupdesc; uint64 nrows = SPI_processed;
@@ -439,16 +439,17 @@ std::vector<KdLeafMeta> db_query_all_kdleaves(const std::string &dataset_path)
         m.bx = std::atoi((v=SPI_getvalue(t,tupdesc,2))?v:"0");
         m.by = std::atoi((v=SPI_getvalue(t,tupdesc,3))?v:"0");
         m.bz = std::atoi((v=SPI_getvalue(t,tupdesc,4))?v:"0");
-        m.leaf_prefix = std::strtoull((v=SPI_getvalue(t,tupdesc,5))?v:"0", nullptr, 10);
-        m.leaf_level = std::atoi((v=SPI_getvalue(t,tupdesc,6))?v:"0");
-        m.offset = std::strtoull((v=SPI_getvalue(t,tupdesc,7))?v:"0", nullptr, 10);
-        m.count = (uint32_t)std::strtoul((v=SPI_getvalue(t,tupdesc,8))?v:"0", nullptr, 10);
-        m.minx = (v=SPI_getvalue(t,tupdesc,9))?std::strtof(v,nullptr):0.0f;
-        m.miny = (v=SPI_getvalue(t,tupdesc,10))?std::strtof(v,nullptr):0.0f;
-        m.minz = (v=SPI_getvalue(t,tupdesc,11))?std::strtof(v,nullptr):0.0f;
-        m.maxx = (v=SPI_getvalue(t,tupdesc,12))?std::strtof(v,nullptr):0.0f;
-        m.maxy = (v=SPI_getvalue(t,tupdesc,13))?std::strtof(v,nullptr):0.0f;
-        m.maxz = (v=SPI_getvalue(t,tupdesc,14))?std::strtof(v,nullptr):0.0f;
+        // Skip level column (index 5) - not used in KdLeafMeta
+        m.leaf_prefix = std::strtoull((v=SPI_getvalue(t,tupdesc,6))?v:"0", nullptr, 10);
+        m.leaf_level = std::atoi((v=SPI_getvalue(t,tupdesc,7))?v:"0");
+        m.offset = std::strtoull((v=SPI_getvalue(t,tupdesc,8))?v:"0", nullptr, 10);
+        m.count = (uint32_t)std::strtoul((v=SPI_getvalue(t,tupdesc,9))?v:"0", nullptr, 10);
+        m.minx = (v=SPI_getvalue(t,tupdesc,10))?std::strtof(v,nullptr):0.0f;
+        m.miny = (v=SPI_getvalue(t,tupdesc,11))?std::strtof(v,nullptr):0.0f;
+        m.minz = (v=SPI_getvalue(t,tupdesc,12))?std::strtof(v,nullptr):0.0f;
+        m.maxx = (v=SPI_getvalue(t,tupdesc,13))?std::strtof(v,nullptr):0.0f;
+        m.maxy = (v=SPI_getvalue(t,tupdesc,14))?std::strtof(v,nullptr):0.0f;
+        m.maxz = (v=SPI_getvalue(t,tupdesc,15))?std::strtof(v,nullptr):0.0f;
         metas.push_back(std::move(m)); }
     SPI_finish(); return metas;
 }

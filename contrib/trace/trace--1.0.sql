@@ -46,7 +46,13 @@ CREATE TYPE index_result AS (
 -- kNN查询结果类型
 CREATE TYPE knn_result AS (
     distance REAL,
-    point spatiotemporal_point
+    x REAL,
+    y REAL,
+    z REAL,
+    data_type SMALLINT,
+    file_id INTEGER,
+    point_id INTEGER,
+    user_id SMALLINT
 );
 
 -- 创建存储表（仅保留当前实现使用到的表）
@@ -105,13 +111,14 @@ CREATE TABLE IF NOT EXISTS trace_bucket_kdleaf (
     leaf_prefix bigint NOT NULL,
     leaf_level int NOT NULL,
     bx int NOT NULL, by int NOT NULL, bz int NOT NULL,
+    level int NOT NULL,
     kd_idx int NOT NULL,
     data_offset bigint NOT NULL,
     count int NOT NULL,
     file_path text NOT NULL,
     minx real NOT NULL, miny real NOT NULL, minz real NOT NULL,
     maxx real NOT NULL, maxy real NOT NULL, maxz real NOT NULL,
-    PRIMARY KEY(dataset_path, leaf_prefix, leaf_level, bx, by, bz, kd_idx)
+    PRIMARY KEY(dataset_path, leaf_prefix, leaf_level, bx, by, bz, level, kd_idx)
 );
 
 -- 函数声明
