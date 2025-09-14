@@ -3,19 +3,7 @@
 
 -- 创建自定义数据类型
 
--- 时空数据点类型
-CREATE TYPE spatiotemporal_point AS (
-    x REAL,
-    y REAL,
-    z REAL,
-    time_stamp REAL,
-    data_type SMALLINT,
-    file_id INTEGER,
-    point_id INTEGER,
-    user_id SMALLINT,
-    intensity REAL,
-    speed REAL
-);
+-- 已弃用: spatiotemporal_point 类型（改为函数直接返回 x,y,z）
 
 -- 加载结果类型（时间字段已移除）
 CREATE TYPE load_result AS (
@@ -48,11 +36,7 @@ CREATE TYPE knn_result AS (
     distance REAL,
     x REAL,
     y REAL,
-    z REAL,
-    data_type SMALLINT,
-    file_id INTEGER,
-    point_id INTEGER,
-    user_id SMALLINT
+    z REAL
 );
 
 -- 创建存储表（仅保留当前实现使用到的表）
@@ -143,14 +127,18 @@ RETURNS index_result
 AS 'MODULE_PATHNAME', 'trace_build_index'
 LANGUAGE C STRICT;
 
--- 范围查询函数
+-- 范围查询函数（仅返回坐标三元组）
 CREATE OR REPLACE FUNCTION trace_range_query(
     min_x REAL, min_y REAL, min_z REAL,
     max_x REAL, max_y REAL, max_z REAL,
     min_time REAL, max_time REAL,
     data_type_mask INTEGER DEFAULT 7
 )
-RETURNS SETOF spatiotemporal_point
+RETURNS TABLE (
+    x REAL,
+    y REAL,
+    z REAL
+)
 AS 'MODULE_PATHNAME', 'trace_range_query'
 LANGUAGE C STRICT;
 

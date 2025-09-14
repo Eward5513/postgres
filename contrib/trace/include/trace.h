@@ -380,7 +380,6 @@ HeapTuple create_index_result_tuple(const IndexResult& result, TupleDesc tupdesc
  * 
  * @note Output tuple contains x, y, z, time, data_type, fid, pid, foreign_key fields
  */
-HeapTuple create_spatiotemporal_point_tuple(const SimplePoint& point, TupleDesc tupdesc);
 
 /**
  * @brief Create PostgreSQL tuple from KnnResult structure
@@ -397,6 +396,13 @@ HeapTuple create_spatiotemporal_point_tuple(const SimplePoint& point, TupleDesc 
  * @note Output tuple contains distance field followed by all point fields
  */
 HeapTuple create_knn_result_tuple(const KnnResult& result, TupleDesc tupdesc);
+
+/**
+ * @brief Create PostgreSQL tuple containing only (x, y, z)
+ *
+ * Used when SQL expects RETURN TABLE (x REAL, y REAL, z REAL).
+ */
+HeapTuple create_xyz_tuple(const SimplePoint& point, TupleDesc tupdesc);
 
 /**
  * @brief Create SimpleBounds from PostgreSQL function arguments

@@ -286,14 +286,14 @@ trace_range_query(PG_FUNCTION_ARGS)
             SimplePoint* stored_results = (SimplePoint*)funcctx->user_fctx;
             SimplePoint point = stored_results[funcctx->call_cntr];
             
-            // Create tuple for this point
+            // Create tuple for this point (x, y, z only)
             TupleDesc tupdesc;
             if (get_call_result_type(fcinfo, NULL, &tupdesc) != TYPEFUNC_COMPOSITE)
                 ereport(ERROR,
                         (errcode(ERRCODE_FEATURE_NOT_SUPPORTED),
                          errmsg("function returning record called in context that cannot accept a record")));
             
-            HeapTuple tuple = trace::create_spatiotemporal_point_tuple(point, tupdesc);
+            HeapTuple tuple = trace::create_xyz_tuple(point, tupdesc);
             MemoryContextSwitchTo(old_context);
             SRF_RETURN_NEXT(funcctx, HeapTupleGetDatum(tuple));
         } else {

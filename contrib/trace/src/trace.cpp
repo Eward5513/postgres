@@ -196,38 +196,29 @@ HeapTuple create_index_result_tuple(const IndexResult& result, TupleDesc tupdesc
     return heap_form_tuple(tupdesc, values, nulls);
 }
 
-HeapTuple create_spatiotemporal_point_tuple(const SimplePoint& point, TupleDesc tupdesc)
-{
-    Datum values[8];
-    bool nulls[8] = {false, false, false, false, false, false, false, false};
-    
-    values[0] = Float4GetDatum(point.x);
-    values[1] = Float4GetDatum(point.y);
-    values[2] = Float4GetDatum(point.z);
-    values[3] = Float4GetDatum(point.time);
-    values[4] = Int32GetDatum(point.data_type);
-    values[5] = Int32GetDatum(point.fid);
-    values[6] = Int32GetDatum(point.pid);
-    values[7] = Int32GetDatum(point.foreign_key);
-    
-    return heap_form_tuple(tupdesc, values, nulls);
-}
+// Removed: create_spatiotemporal_point_tuple (no longer needed)
 
 HeapTuple create_knn_result_tuple(const KnnResult& result, TupleDesc tupdesc)
 {
-    // Return a flattened tuple with distance + point fields (without time_stamp)
-    Datum values[8];
-    bool nulls[8] = {false, false, false, false, false, false, false, false};
+    // Return distance + x, y, z only
+    Datum values[4];
+    bool nulls[4] = {false, false, false, false};
     
     values[0] = Float4GetDatum(result.distance);
     values[1] = Float4GetDatum(result.point.x);
     values[2] = Float4GetDatum(result.point.y);
     values[3] = Float4GetDatum(result.point.z);
-    values[4] = Int16GetDatum((int16)result.point.data_type);
-    values[5] = Int32GetDatum(result.point.fid);
-    values[6] = Int32GetDatum(result.point.pid);
-    values[7] = Int16GetDatum((int16)result.point.foreign_key); // user_id
     
+    return heap_form_tuple(tupdesc, values, nulls);
+}
+
+HeapTuple create_xyz_tuple(const SimplePoint& point, TupleDesc tupdesc)
+{
+    Datum values[3];
+    bool nulls[3] = {false, false, false};
+    values[0] = Float4GetDatum(point.x);
+    values[1] = Float4GetDatum(point.y);
+    values[2] = Float4GetDatum(point.z);
     return heap_form_tuple(tupdesc, values, nulls);
 }
 

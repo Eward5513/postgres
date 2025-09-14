@@ -80,9 +80,9 @@ SELECT 'Testing specific point data' as test_phase;
 
 -- 查询并显示部分具体点数据
 SELECT 
-    x, y, z, data_type, file_id, point_id
+    x, y, z
 FROM trace_range_query(116.397, 39.904, 10.0, 116.398, 39.905, 11.0, -1000.0, 9999.0, 7)
-ORDER BY x, y, z, file_id, point_id
+ORDER BY x, y, z
 LIMIT 5;
 
 -- 测试6: 空结果测试

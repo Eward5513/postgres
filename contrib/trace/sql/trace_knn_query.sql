@@ -48,8 +48,7 @@ FROM trace_knn_query(116.3978, 39.9046, 10.9, 5, '-infinity'::REAL, 'infinity'::
 -- 查询最近的3个点
 SELECT 
     distance,
-    x, y, z,
-    data_type, file_id, point_id
+    x, y, z
 FROM trace_knn_query(116.3978, 39.9046, 10.9, 3, '-infinity'::REAL, 'infinity'::REAL, 7)
 ORDER BY distance;
 
@@ -150,9 +149,7 @@ SELECT 'Testing specific result validation' as test_phase;
 -- 查询最近的点并显示详细信息
 SELECT 
     ROUND(distance::numeric, 6) as rounded_distance,
-    x, y, z,
-    data_type,
-    file_id, point_id
+    x, y, z
 FROM trace_knn_query(116.3974, 39.9042, 10.5, 3, '-infinity'::REAL, 'infinity'::REAL, 7)
 ORDER BY distance;
 
