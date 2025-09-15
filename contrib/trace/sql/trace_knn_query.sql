@@ -43,13 +43,13 @@ SELECT 'Testing basic kNN queries' as test_phase;
 
 -- 查询最近的5个点（从第一个数据集中心附近开始）
 SELECT COUNT(*) as knn_5_count
-FROM trace_knn_query(116.3978, 39.9046, 10.9, 5, '-infinity'::REAL, 'infinity'::REAL, 7);
+FROM trace_knn_query(116.3978, 39.9046, 10.9, 5, 7);
 
 -- 查询最近的3个点
 SELECT 
     distance,
     x, y, z
-FROM trace_knn_query(116.3978, 39.9046, 10.9, 3, '-infinity'::REAL, 'infinity'::REAL, 7)
+FROM trace_knn_query(116.3978, 39.9046, 10.9, 3, 7)
 ORDER BY distance;
 
 -- 测试3: 不同k值测试
@@ -57,37 +57,37 @@ SELECT 'Testing different k values' as test_phase;
 
 -- k=1 (最近的1个点)
 SELECT COUNT(*) as knn_1_count
-FROM trace_knn_query(116.3975, 39.9043, 10.6, 1, '-infinity'::REAL, 'infinity'::REAL, 7);
+FROM trace_knn_query(116.3975, 39.9043, 10.6, 1, 7);
 
 -- k=10 (最近的10个点)
 SELECT COUNT(*) as knn_10_count  
-FROM trace_knn_query(116.3975, 39.9043, 10.6, 10, '-infinity'::REAL, 'infinity'::REAL, 7);
+FROM trace_knn_query(116.3975, 39.9043, 10.6, 10, 7);
 
 -- k=20 (如果总点数少于20，应该返回所有点)
 SELECT COUNT(*) as knn_20_count
-FROM trace_knn_query(116.3975, 39.9043, 10.6, 20, '-infinity'::REAL, 'infinity'::REAL, 7);
+FROM trace_knn_query(116.3975, 39.9043, 10.6, 20, 7);
 
 -- 测试4: 不同查询位置测试
 SELECT 'Testing different query positions' as test_phase;
 
 -- 从不同位置查询最近的点
 SELECT COUNT(*) as knn_position_1
-FROM trace_knn_query(116.3978, 39.9046, 10.9, 5, '-infinity'::REAL, 'infinity'::REAL, 7);
+FROM trace_knn_query(116.3978, 39.9046, 10.9, 5, 7);
 
 -- 从另一个位置查询最近的点
 SELECT COUNT(*) as knn_position_2
-FROM trace_knn_query(116.4005, 39.9005, 15.5, 5, '-infinity'::REAL, 'infinity'::REAL, 7);
+FROM trace_knn_query(116.4005, 39.9005, 15.5, 5, 7);
 
 -- 从第三个位置查询最近的点  
 SELECT COUNT(*) as knn_position_3
-FROM trace_knn_query(116.3905, 39.9105, 5.5, 5, '-infinity'::REAL, 'infinity'::REAL, 7);
+FROM trace_knn_query(116.3905, 39.9105, 5.5, 5, 7);
 
 -- 测试5: 数据类型过滤测试
 SELECT 'Testing kNN with data type filtering' as test_phase;
 
 -- 仅查询特定数据类型的最近点
 SELECT COUNT(*) as knn_type_1
-FROM trace_knn_query(116.3978, 39.9046, 10.9, 5, '-infinity'::REAL, 'infinity'::REAL, 1);
+FROM trace_knn_query(116.3978, 39.9046, 10.9, 5, 1);
 
 -- 测试6: 不同查询中心点测试
 SELECT 'Testing different query center points' as test_phase;
@@ -96,19 +96,19 @@ SELECT 'Testing different query center points' as test_phase;
 SELECT 
     'Dataset 1 center' as query_center,
     COUNT(*) as point_count
-FROM trace_knn_query(116.3978, 39.9046, 10.9, 3, '-infinity'::REAL, 'infinity'::REAL, 7);
+FROM trace_knn_query(116.3978, 39.9046, 10.9, 3, 7);
 
 -- 从数据集2的范围内查询
 SELECT 
     'Dataset 2 center' as query_center,
     COUNT(*) as point_count
-FROM trace_knn_query(116.4005, 39.9005, 15.5, 3, '-infinity'::REAL, 'infinity'::REAL, 7);
+FROM trace_knn_query(116.4005, 39.9005, 15.5, 3, 7);
 
 -- 从数据集3的范围内查询
 SELECT 
     'Dataset 3 center' as query_center,
     COUNT(*) as point_count
-FROM trace_knn_query(116.3905, 39.9105, 5.5, 3, '-infinity'::REAL, 'infinity'::REAL, 7);
+FROM trace_knn_query(116.3905, 39.9105, 5.5, 3, 7);
 
 -- 测试7: 距离验证测试
 SELECT 'Testing distance calculations' as test_phase;
@@ -118,7 +118,7 @@ WITH knn_results AS (
     SELECT 
         distance,
         ROW_NUMBER() OVER (ORDER BY distance) as rn
-    FROM trace_knn_query(116.3978, 39.9046, 10.9, 5, '-infinity'::REAL, 'infinity'::REAL, 7)
+    FROM trace_knn_query(116.3978, 39.9046, 10.9, 5, 7)
 )
 SELECT 
     COUNT(*) as total_results,
@@ -132,16 +132,16 @@ SELECT 'Testing boundary cases' as test_phase;
 -- k=0 (应该返回错误)
 \set ON_ERROR_STOP off
 SELECT COUNT(*) as knn_k_zero
-FROM trace_knn_query(116.3978, 39.9046, 10.9, 0, '-infinity'::REAL, 'infinity'::REAL, 7);
+FROM trace_knn_query(116.3978, 39.9046, 10.9, 0, 7);
 \set ON_ERROR_STOP on
 
 -- 查询中心在数据范围外
 SELECT COUNT(*) as knn_outside_range
-FROM trace_knn_query(200.0, 200.0, 200.0, 5, '-infinity'::REAL, 'infinity'::REAL, 7);
+FROM trace_knn_query(200.0, 200.0, 200.0, 5, 7);
 
 -- 查询不存在的数据类型
 SELECT COUNT(*) as knn_empty_datatype
-FROM trace_knn_query(116.3978, 39.9046, 10.9, 5, '-infinity'::REAL, 'infinity'::REAL, 4);
+FROM trace_knn_query(116.3978, 39.9046, 10.9, 5, 4);
 
 -- 测试9: 具体结果验证
 SELECT 'Testing specific result validation' as test_phase;
@@ -150,7 +150,7 @@ SELECT 'Testing specific result validation' as test_phase;
 SELECT 
     ROUND(distance::numeric, 6) as rounded_distance,
     x, y, z
-FROM trace_knn_query(116.3974, 39.9042, 10.5, 3, '-infinity'::REAL, 'infinity'::REAL, 7)
+FROM trace_knn_query(116.3974, 39.9042, 10.5, 3, 7)
 ORDER BY distance;
 
 -- 测试10: 性能和统计

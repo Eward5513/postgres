@@ -247,11 +247,11 @@ IndexResult trace_build_index_impl(int chunk_max_level, int octree_max_level, in
 /**
  * @brief Perform spatial range query within specified bounds
  * 
- * Searches for all spatiotemporal points that fall within the specified
- * spatial and temporal bounds. Uses spatial indices for efficient retrieval
+ * Searches for all points that fall within the specified spatial bounds.
+ * Uses spatial indices for efficient retrieval
  * when available, otherwise performs brute-force search.
  * 
- * @param bounds Spatial and temporal bounds for the query
+ * @param bounds Spatial bounds for the query
  * @param data_type_mask Bit mask for filtering by data type (0 = all types)
  * @return Vector of points within the specified bounds
  * 
@@ -261,7 +261,7 @@ IndexResult trace_build_index_impl(int chunk_max_level, int octree_max_level, in
  * @note Large result sets may consume significant memory
  * 
  * @example
- * SimpleBounds bounds{0.0f, 0.0f, 0.0f, 0.0f, 100.0f, 100.0f, 100.0f, 1000.0f};
+ * SimpleBounds bounds{0.0f, 0.0f, 0.0f, 100.0f, 100.0f, 100.0f};
  * auto points = trace_range_query_impl(bounds, TRACE_TYPE_POINTCLOUD);
  */
 std::vector<SimplePoint> trace_range_query_impl(const SimpleBounds& bounds, int data_type_mask);
@@ -269,14 +269,12 @@ std::vector<SimplePoint> trace_range_query_impl(const SimpleBounds& bounds, int 
 /**
  * @brief Perform k-nearest neighbor query around a center point
  * 
- * Finds the k nearest spatiotemporal points to the specified center point
- * within the given temporal range. Uses spatial indices and distance metrics
+ * Finds the k nearest points to the specified center point.
+ * Uses spatial indices and distance metrics
  * for efficient nearest neighbor search.
  * 
  * @param center Center point for the query
  * @param k Number of nearest neighbors to find (1-10000)
- * @param min_time Minimum time bound for temporal filtering (currently ignored)
- * @param max_time Maximum time bound for temporal filtering (currently ignored)
  * @param data_type_mask Bit mask for filtering by data type (0 = all types)
  * @return Vector of (point, distance) pairs sorted by distance
  * 
@@ -288,10 +286,18 @@ std::vector<SimplePoint> trace_range_query_impl(const SimpleBounds& bounds, int 
  * 
  * @example
  * SimplePoint center{50.0f, 50.0f, 50.0f, 500.0f, 1, 0, 0, 0};
- * auto neighbors = trace_knn_query_impl(center, 10, 0.0f, 1000.0f, 0);
+ * auto neighbors = trace_knn_query_impl(center, 10, 0);
  */
 std::vector<std::pair<SimplePoint, float>> trace_knn_query_impl(const SimplePoint& center, int k,
-                                                                float min_time, float max_time, int data_type_mask);
+                                                                int data_type_mask);
+
+/**
+ * @brief Perform buffer query within a radius around center point
+ *
+ * Returns all points whose Euclidean distance to center is <= radius.
+ */
+std::vector<SimplePoint> trace_buffer_query_impl(const SimplePoint& center, float radius,
+                                                 int data_type_mask);
 
 
 // ============================================================================
@@ -407,7 +413,7 @@ HeapTuple create_xyz_tuple(const SimplePoint& point, TupleDesc tupdesc);
 /**
  * @brief Create SimpleBounds from PostgreSQL function arguments
  * 
- * Constructs a SimpleBounds structure from spatial and temporal bounds
+ * Constructs a SimpleBounds structure from spatial bounds
  * passed as PostgreSQL function arguments. Handles type conversion from
  * PostgreSQL's numeric types to C++ float types.
  * 
@@ -417,8 +423,6 @@ HeapTuple create_xyz_tuple(const SimplePoint& point, TupleDesc tupdesc);
  * @param max_x Maximum X coordinate
  * @param max_y Maximum Y coordinate
  * @param max_z Maximum Z coordinate
- * @param min_time Minimum time value (currently ignored)
- * @param max_time Maximum time value (currently ignored)
  * @return SimpleBounds structure with specified bounds
  * 
  * @throws std::exception if bounds are invalid (min > max)
@@ -429,8 +433,7 @@ HeapTuple create_xyz_tuple(const SimplePoint& point, TupleDesc tupdesc);
  *                                          0.0f, 1000.0f);
  */
 SimpleBounds bounds_from_pg_args(float min_x, float min_y, float min_z,
-                                float max_x, float max_y, float max_z,
-                                float min_time, float max_time);
+                                float max_x, float max_y, float max_z);
 
 /**
  * @brief Create SimplePoint from PostgreSQL function arguments

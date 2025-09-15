@@ -60,7 +60,7 @@ SELECT 'Testing basic range queries' as test_phase;
 
 -- 查询整个数据范围
 SELECT COUNT(*) as total_points_in_full_range
-FROM trace_range_query(116.39, 39.90, 5.0, 116.41, 39.92, 16.0, 1000.0, 4000.0, 7);
+FROM trace_range_query(116.39, 39.90, 5.0, 116.41, 39.92, 16.0, 7);
  total_points_in_full_range 
 ----------------------------
                          30
@@ -68,7 +68,7 @@ FROM trace_range_query(116.39, 39.90, 5.0, 116.41, 39.92, 16.0, 1000.0, 4000.0, 
 
 -- 查询小范围
 SELECT COUNT(*) as points_in_small_range
-FROM trace_range_query(116.397, 39.904, 10.0, 116.398, 39.905, 11.0, -1000.0, 9999.0, 7);
+FROM trace_range_query(116.397, 39.904, 10.0, 116.398, 39.905, 11.0, 7);
  points_in_small_range 
 -----------------------
                      6
@@ -76,7 +76,7 @@ FROM trace_range_query(116.397, 39.904, 10.0, 116.398, 39.905, 11.0, -1000.0, 99
 
 -- 查询特定数据类型
 SELECT COUNT(*) as points_with_type_1
-FROM trace_range_query(116.39, 39.90, 5.0, 116.41, 39.92, 16.0, 1000.0, 4000.0, 1);
+FROM trace_range_query(116.39, 39.90, 5.0, 116.41, 39.92, 16.0, 1);
  points_with_type_1 
 --------------------
                  30
@@ -91,7 +91,7 @@ SELECT 'Testing range query boundaries' as test_phase;
 
 -- 测试边界上的点
 SELECT COUNT(*) as boundary_points
-FROM trace_range_query(116.3974, 39.9042, 10.5, 116.3974, 39.9042, 10.5, -1000.0, 9999.0, 7);
+FROM trace_range_query(116.3974, 39.9042, 10.5, 116.3974, 39.9042, 10.5, 7);
  boundary_points 
 -----------------
                1
@@ -99,7 +99,7 @@ FROM trace_range_query(116.3974, 39.9042, 10.5, 116.3974, 39.9042, 10.5, -1000.0
 
 -- 测试稍微扩展的边界
 SELECT COUNT(*) as expanded_boundary_points
-FROM trace_range_query(116.3973, 39.9041, 10.4, 116.3975, 39.9043, 10.6, -1000.0, 9999.0, 7);
+FROM trace_range_query(116.3973, 39.9041, 10.4, 116.3975, 39.9043, 10.6, 7);
  expanded_boundary_points 
 --------------------------
                         2
@@ -114,7 +114,7 @@ SELECT 'Testing data type filtering' as test_phase;
 
 -- 查询所有数据类型
 SELECT COUNT(*) as all_data_types
-FROM trace_range_query(116.39, 39.90, 5.0, 116.41, 39.92, 16.0, -1000.0, 9999.0, 7);
+FROM trace_range_query(116.39, 39.90, 5.0, 116.41, 39.92, 16.0, 7);
  all_data_types 
 ----------------
              30
@@ -122,7 +122,7 @@ FROM trace_range_query(116.39, 39.90, 5.0, 116.41, 39.92, 16.0, -1000.0, 9999.0,
 
 -- 查询特定数据类型
 SELECT COUNT(*) as specific_data_type
-FROM trace_range_query(116.39, 39.90, 5.0, 116.41, 39.92, 16.0, -1000.0, 9999.0, 1);
+FROM trace_range_query(116.39, 39.90, 5.0, 116.41, 39.92, 16.0, 1);
  specific_data_type 
 --------------------
                  30
@@ -138,7 +138,7 @@ SELECT 'Testing specific point data' as test_phase;
 -- 查询并显示部分具体点数据
 SELECT 
     x, y, z
-FROM trace_range_query(116.397, 39.904, 10.0, 116.398, 39.905, 11.0, -1000.0, 9999.0, 7)
+FROM trace_range_query(116.397, 39.904, 10.0, 116.398, 39.905, 11.0, 7)
 ORDER BY x, y, z
 LIMIT 5;
     x     |    y    |  z   
@@ -159,7 +159,7 @@ SELECT 'Testing empty result scenarios' as test_phase;
 
 -- 查询不存在的空间范围
 SELECT COUNT(*) as empty_spatial_range
-FROM trace_range_query(200.0, 200.0, 200.0, 201.0, 201.0, 201.0, -1000.0, 9999.0, 7);
+FROM trace_range_query(200.0, 200.0, 200.0, 201.0, 201.0, 201.0, 7);
  empty_spatial_range 
 ---------------------
                    0
@@ -167,7 +167,7 @@ FROM trace_range_query(200.0, 200.0, 200.0, 201.0, 201.0, 201.0, -1000.0, 9999.0
 
 -- 查询不存在的数据类型
 SELECT COUNT(*) as empty_data_type
-FROM trace_range_query(116.39, 39.90, 5.0, 116.41, 39.92, 16.0, -1000.0, 9999.0, 4);
+FROM trace_range_query(116.39, 39.90, 5.0, 116.41, 39.92, 16.0, 4);
  empty_data_type 
 -----------------
                0
@@ -182,7 +182,7 @@ SELECT 'Testing parameter boundaries' as test_phase;
 
 -- 测试最小范围
 SELECT COUNT(*) as minimal_range
-FROM trace_range_query(116.3974, 39.9042, 10.5, 116.3974, 39.9042, 10.5, -1000.0, 9999.0, 7);
+FROM trace_range_query(116.3974, 39.9042, 10.5, 116.3974, 39.9042, 10.5, 7);
  minimal_range 
 ---------------
              1
@@ -191,11 +191,9 @@ FROM trace_range_query(116.3974, 39.9042, 10.5, 116.3974, 39.9042, 10.5, -1000.0
 -- 测试反向边界（min > max，应该返回错误）
 \set ON_ERROR_STOP off
 SELECT COUNT(*) as reverse_spatial_bounds
-FROM trace_range_query(116.398, 39.905, 11.0, 116.397, 39.904, 10.0, -1000.0, 9999.0, 7);
+FROM trace_range_query(116.398, 39.905, 11.0, 116.397, 39.904, 10.0, 7);
 ERROR:  invalid query bounds: min values must be <= max values
-SELECT COUNT(*) as reverse_time_bounds
-FROM trace_range_query(116.397, 39.904, 10.0, 116.398, 39.905, 11.0, 1010.0, 1000.0, 7);
-ERROR:  invalid query bounds: min values must be <= max values
+-- time bounds removed, skip reverse_time_bounds test
 \set ON_ERROR_STOP on
 -- 测试8: 性能相关统计
 SELECT 'Performance and statistics' as test_phase;

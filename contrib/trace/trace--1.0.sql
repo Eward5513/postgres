@@ -117,6 +117,20 @@ RETURNS load_result
 AS 'MODULE_PATHNAME', 'trace_load_data'
 LANGUAGE C STRICT;
 
+-- 缓冲区查询函数（返回坐标三元组）
+CREATE OR REPLACE FUNCTION trace_buffer_query(
+    center_x REAL, center_y REAL, center_z REAL,
+    radius REAL,
+    data_type_mask INTEGER DEFAULT 7
+)
+RETURNS TABLE (
+    x REAL,
+    y REAL,
+    z REAL
+)
+AS 'MODULE_PATHNAME', 'trace_buffer_query'
+LANGUAGE C STRICT;
+
 -- 索引构建函数
 -- 使用 GUC 变量进行配置:
 -- SET trace.chunk_max_level = 8;
@@ -131,7 +145,6 @@ LANGUAGE C STRICT;
 CREATE OR REPLACE FUNCTION trace_range_query(
     min_x REAL, min_y REAL, min_z REAL,
     max_x REAL, max_y REAL, max_z REAL,
-    min_time REAL, max_time REAL,
     data_type_mask INTEGER DEFAULT 7
 )
 RETURNS TABLE (
@@ -146,8 +159,6 @@ LANGUAGE C STRICT;
 CREATE OR REPLACE FUNCTION trace_knn_query(
     center_x REAL, center_y REAL, center_z REAL,
     k INTEGER,
-    min_time REAL DEFAULT '-infinity'::REAL,
-    max_time REAL DEFAULT 'infinity'::REAL,
     data_type_mask INTEGER DEFAULT 7
 )
 RETURNS SETOF knn_result

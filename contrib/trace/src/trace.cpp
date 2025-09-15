@@ -15,6 +15,7 @@
 #include <system_error>
 #include <cstdlib>
 #include <sstream>
+#include <unordered_set>
 
 // 第三方库
 #include "nlohmann/json.hpp"
@@ -139,10 +140,8 @@ bool get_current_dataset_info(std::string& dataset_path, std::vector<std::string
 
 // Type conversion functions
 SimpleBounds bounds_from_pg_args(float min_x, float min_y, float min_z, 
-                                float max_x, float max_y, float max_z,
-                                float min_time, float max_time)
+                                float max_x, float max_y, float max_z)
 {
-    // Time parameters are ignored since SimpleBounds no longer contains time fields
     return SimpleBounds(min_x, min_y, min_z, max_x, max_y, max_z);
 }
 
@@ -540,7 +539,6 @@ std::vector<SimplePoint> trace_range_query_impl(const SimpleBounds& bounds, int 
 
 // kNN query implementation
 std::vector<std::pair<SimplePoint, float>> trace_knn_query_impl(const SimplePoint& center, int k, 
-                                                                float min_time, float max_time, 
                                                                 int data_type_mask)
 {
     std::vector<std::pair<SimplePoint, float>> results;
@@ -548,38 +546,63 @@ std::vector<std::pair<SimplePoint, float>> trace_knn_query_impl(const SimplePoin
     if (k <= 0) return results;
     if ((data_type_mask & TRACE_TYPE_POINTCLOUD) == 0) return results;
 
-    // Get dataset path from database
+    // Get dataset info
     std::string dataset_path;
     std::vector<std::string> file_paths; // Not used in query but needed for function
-    
     if (!trace::get_current_dataset_info(dataset_path, file_paths)) {
         elog(WARNING, "Failed to retrieve dataset information for kNN query");
         return results;
     }
 
-    // 使用 kd 叶（桶内二分）的包围盒做粗序，从近到远读取块更新堆
-    auto kdleaves = db_query_all_kdleaves(dataset_path);
-    std::vector<std::pair<float,size_t>> order;
-    order.reserve(kdleaves.size());
-    for (size_t i=0;i<kdleaves.size();++i) {
-        const auto &m = kdleaves[i];
-        // 用 kd 叶 bbox 到点的最小距离
-        float dx=0,dy=0,dz=0; if (center.x<m.minx) dx=m.minx-center.x; else if (center.x>m.maxx) dx=center.x-m.maxx;
-        if (center.y<m.miny) dy=m.miny-center.y; else if (center.y>m.maxy) dy=center.y-m.maxy;
-        if (center.z<m.minz) dz=m.minz-center.z; else if (center.z>m.maxz) dz=center.z-m.maxz;
-        float d2 = dx*dx+dy*dy+dz*dz;
-        order.emplace_back(d2, i);
-    }
-    std::sort(order.begin(), order.end(), [](auto &a, auto &b){ return a.first < b.first; });
-
-    std::priority_queue<std::pair<float,KnnCand>> heap;
-    for (auto &pr : order) {
-        if ((int)heap.size() >= k && pr.first > heap.top().first) break; // 剪枝
-        const auto &m = kdleaves[pr.second];
-        read_points_block_update_knn(m.file_path, m.offset, m.count, center, k, heap);
+    // Initial radius from dataset diagonal and ensure intersection with dataset bbox
+    SimpleBounds dbounds; trace::get_current_dataset_bounds(dbounds);
+    float dx= dbounds.max_x - dbounds.min_x;
+    float dy= dbounds.max_y - dbounds.min_y;
+    float dz= dbounds.max_z - dbounds.min_z;
+    float diag = std::sqrt(std::max(0.0f, dx*dx + dy*dy + dz*dz));
+    if (!(diag > 0.0f)) diag = 100.0f;
+    float radius = std::max(0.001f, diag * 0.01f);
+    // distance from center to dataset bbox (min distance)
+    float sdx=0, sdy=0, sdz=0;
+    if (center.x < dbounds.min_x) sdx = dbounds.min_x - center.x; else if (center.x > dbounds.max_x) sdx = center.x - dbounds.max_x;
+    if (center.y < dbounds.min_y) sdy = dbounds.min_y - center.y; else if (center.y > dbounds.max_y) sdy = center.y - dbounds.max_y;
+    if (center.z < dbounds.min_z) sdz = dbounds.min_z - center.z; else if (center.z > dbounds.max_z) sdz = center.z - dbounds.max_z;
+    float dmin2 = sdx*sdx + sdy*sdy + sdz*sdz;
+    if (dmin2 > 0.0f) {
+        float dmin = std::sqrt(dmin2);
+        if (radius < dmin) radius = dmin + 1e-6f;
     }
 
-    // 输出前 k 个
+    std::priority_queue<std::pair<float,KnnCand>> heap; // max-heap by dist2
+    const int max_expansions = 64;
+    int expansions = 0;
+    std::unordered_set<std::string> visited_blocks;
+
+    while (true) {
+        // Query buckets intersecting current AABB
+        SimpleBounds bbox(center.x - radius, center.y - radius, center.z - radius,
+                          center.x + radius, center.y + radius, center.z + radius);
+        auto buckets = db_query_buckets_intersecting(dataset_path, bbox);
+        for (const auto &bm : buckets) {
+            // de-duplicate blocks across expansions
+            std::string key = bm.file_path + "#" + std::to_string((unsigned long long)bm.offset);
+            if (visited_blocks.insert(key).second) {
+                read_points_block_update_knn(bm.file_path, bm.offset, bm.count, center, k, heap);
+            }
+        }
+
+        if ((int)heap.size() >= k) {
+            float cutoff = std::sqrt(heap.top().first);
+            if (radius >= cutoff) break;
+            radius = cutoff;
+        } else {
+            radius *= 2.0f;
+        }
+
+        if (++expansions >= max_expansions || radius > diag * 2.0f) break;
+    }
+
+    // Output top-k sorted by distance
     std::vector<std::pair<float,KnnCand>> tmp;
     while (!heap.empty()) { tmp.push_back(heap.top()); heap.pop(); }
     std::sort(tmp.begin(), tmp.end(), [](auto &a, auto &b){ return a.first < b.first; });
@@ -591,5 +614,32 @@ std::vector<std::pair<SimplePoint, float>> trace_knn_query_impl(const SimplePoin
         results.emplace_back(p, d);
     }
     
+    return results;
+}
+
+// Buffer query implementation
+std::vector<SimplePoint> trace_buffer_query_impl(const SimplePoint& center, float radius,
+                                                 int data_type_mask)
+{
+    std::vector<SimplePoint> results;
+    if (radius <= 0.0f) return results;
+    if ((data_type_mask & TRACE_TYPE_POINTCLOUD) == 0) return results;
+
+    // Get dataset path
+    std::string dataset_path; std::vector<std::string> file_paths;
+    if (!trace::get_current_dataset_info(dataset_path, file_paths)) {
+        elog(WARNING, "Failed to retrieve dataset information for buffer query");
+        return results;
+    }
+    
+    // Compute bounding box of the sphere and use bucket-level pruning
+    SimpleBounds bbox(center.x - radius, center.y - radius, center.z - radius,
+                      center.x + radius, center.y + radius, center.z + radius);
+    auto buckets = db_query_buckets_intersecting(dataset_path, bbox);
+    for (const auto &bm : buckets) {
+        // Further filter within the block by radius
+        read_points_block_filter_radius(bm.file_path, bm.offset, bm.count, center, radius, data_type_mask, results);
+    }
+
     return results;
 }

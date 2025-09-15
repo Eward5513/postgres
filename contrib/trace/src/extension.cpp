@@ -1,5 +1,6 @@
 // 使用统一的安全头文件处理PostgreSQL和libintl.h冲突
 #include "../include/safe_header.h"
+#include <cmath>
 
 // 扩展特有的PostgreSQL宏必须在extern "C"块内定义
 extern "C" {
@@ -11,6 +12,7 @@ PG_FUNCTION_INFO_V1(trace_load_data);
 PG_FUNCTION_INFO_V1(trace_build_index);
 PG_FUNCTION_INFO_V1(trace_range_query);
 PG_FUNCTION_INFO_V1(trace_knn_query);
+PG_FUNCTION_INFO_V1(trace_buffer_query);
 }
 
 #include "../include/trace.h"
@@ -240,12 +242,10 @@ trace_range_query(PG_FUNCTION_ARGS)
     float4 max_x = PG_GETARG_FLOAT4(3);
     float4 max_y = PG_GETARG_FLOAT4(4);
     float4 max_z = PG_GETARG_FLOAT4(5);
-    float4 min_time = PG_GETARG_FLOAT4(6);
-    float4 max_time = PG_GETARG_FLOAT4(7);
-    int32 data_type_mask = PG_GETARG_INT32(8);
+    int32 data_type_mask = PG_GETARG_INT32(6);
     
     // Validate query bounds
-    if (min_x > max_x || min_y > max_y || min_z > max_z || min_time > max_time) {
+    if (min_x > max_x || min_y > max_y || min_z > max_z) {
         ereport(ERROR,
                 (errcode(ERRCODE_INVALID_PARAMETER_VALUE),
                  errmsg("invalid query bounds: min values must be <= max values")));
@@ -257,8 +257,7 @@ trace_range_query(PG_FUNCTION_ARGS)
     try {
         // Create query bounds
         SimpleBounds query_bounds = trace::bounds_from_pg_args(min_x, min_y, min_z, 
-                                                              max_x, max_y, max_z,
-                                                              min_time, max_time);
+                                                              max_x, max_y, max_z);
         
         if (SRF_IS_FIRSTCALL()) {
             funcctx = SRF_FIRSTCALL_INIT();
@@ -320,21 +319,13 @@ trace_knn_query(PG_FUNCTION_ARGS)
     float4 center_y = PG_GETARG_FLOAT4(1);
     float4 center_z = PG_GETARG_FLOAT4(2);
     int32 k = PG_GETARG_INT32(3);
-    float4 min_time = PG_GETARG_FLOAT4(4);
-    float4 max_time = PG_GETARG_FLOAT4(5);
-    int32 data_type_mask = PG_GETARG_INT32(6);
+    int32 data_type_mask = PG_GETARG_INT32(4);
     
     // Validate parameters
     if (k <= 0 || k > 10000) {
         ereport(ERROR,
                 (errcode(ERRCODE_INVALID_PARAMETER_VALUE),
                  errmsg("k must be between 1 and 10000")));
-    }
-    
-    if (min_time > max_time) {
-        ereport(ERROR,
-                (errcode(ERRCODE_INVALID_PARAMETER_VALUE),
-                 errmsg("min_time must be <= max_time")));
     }
     
     MemoryContext old_context = MemoryContextSwitchTo(trace_query_context);
@@ -351,7 +342,7 @@ trace_knn_query(PG_FUNCTION_ARGS)
             
             // Call main implementation
             std::vector<std::pair<SimplePoint, float>> knn_results = 
-                trace_knn_query_impl(query_point, k, min_time, max_time, data_type_mask);
+                trace_knn_query_impl(query_point, k, data_type_mask);
             
             // Convert to KnnResult format and store in function context
             funcctx->max_calls = knn_results.size();
@@ -397,6 +388,73 @@ trace_knn_query(PG_FUNCTION_ARGS)
                  errmsg("error in kNN query: %s", e.what())));
     }
     
+    MemoryContextSwitchTo(old_context);
+    PG_RETURN_NULL();
+}
+
+// Buffer query function
+extern "C" Datum
+trace_buffer_query(PG_FUNCTION_ARGS)
+{
+    float4 center_x = PG_GETARG_FLOAT4(0);
+    float4 center_y = PG_GETARG_FLOAT4(1);
+    float4 center_z = PG_GETARG_FLOAT4(2);
+    float4 radius = PG_GETARG_FLOAT4(3);
+    int32 data_type_mask = PG_GETARG_INT32(4);
+
+    if (radius <= 0.0f || !std::isfinite(radius)) {
+        ereport(ERROR,
+                (errcode(ERRCODE_INVALID_PARAMETER_VALUE),
+                 errmsg("radius must be positive and finite")));
+    }
+
+    MemoryContext old_context = MemoryContextSwitchTo(trace_query_context);
+    FuncCallContext *funcctx;
+
+    try {
+        SimplePoint center = trace::point_from_pg_args(center_x, center_y, center_z, 0.0);
+
+        if (SRF_IS_FIRSTCALL()) {
+            funcctx = SRF_FIRSTCALL_INIT();
+            MemoryContext oldcontext = MemoryContextSwitchTo(funcctx->multi_call_memory_ctx);
+
+            std::vector<SimplePoint> results = trace_buffer_query_impl(center, radius, data_type_mask);
+
+            funcctx->max_calls = results.size();
+            if (!results.empty()) {
+                funcctx->user_fctx = palloc(sizeof(SimplePoint) * results.size());
+                memcpy(funcctx->user_fctx, results.data(), sizeof(SimplePoint) * results.size());
+            } else {
+                funcctx->user_fctx = NULL;
+            }
+            MemoryContextSwitchTo(oldcontext);
+        }
+
+        funcctx = SRF_PERCALL_SETUP();
+
+        if (funcctx->call_cntr < funcctx->max_calls) {
+            SimplePoint* stored_results = (SimplePoint*)funcctx->user_fctx;
+            SimplePoint point = stored_results[funcctx->call_cntr];
+            TupleDesc tupdesc;
+            if (get_call_result_type(fcinfo, NULL, &tupdesc) != TYPEFUNC_COMPOSITE)
+                ereport(ERROR,
+                        (errcode(ERRCODE_FEATURE_NOT_SUPPORTED),
+                         errmsg("function returning record called in context that cannot accept a record")));
+            HeapTuple tuple = trace::create_xyz_tuple(point, tupdesc);
+            MemoryContextSwitchTo(old_context);
+            SRF_RETURN_NEXT(funcctx, HeapTupleGetDatum(tuple));
+        } else {
+            MemoryContextSwitchTo(old_context);
+            SRF_RETURN_DONE(funcctx);
+        }
+
+    } catch (const std::exception& e) {
+        MemoryContextSwitchTo(old_context);
+        ereport(ERROR,
+                (errcode(ERRCODE_INTERNAL_ERROR),
+                 errmsg("error in buffer query: %s", e.what())));
+    }
+
     MemoryContextSwitchTo(old_context);
     PG_RETURN_NULL();
 }

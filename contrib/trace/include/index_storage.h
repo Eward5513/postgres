@@ -80,6 +80,12 @@ void read_points_block_update_knn(const std::string &file_path, uint64_t offset,
                                   const SimplePoint &c, int k,
                                   std::priority_queue<std::pair<float,KnnCand>> &heap);
 
+// 按文件偏移读取 count 条数据并按半径过滤，追加到 out
+void read_points_block_filter_radius(const std::string &file_path, uint64_t offset, uint32_t count,
+                                     const SimplePoint &c, float radius,
+                                     int data_type_mask,
+                                     std::vector<SimplePoint> &out);
+
 // 数据库查询函数
 std::vector<BucketMeta> db_query_buckets_intersecting(const std::string &dataset_path,
                                                       const SimpleBounds &b);
