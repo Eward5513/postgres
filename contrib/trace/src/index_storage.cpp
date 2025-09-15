@@ -13,6 +13,7 @@
 #include "executor/spi.h"
 
 #include "../include/index_storage.h"
+#include "../include/geo_utils.h"
 #include "../include/pgutils.h"
 
 using std::string;
@@ -471,7 +472,21 @@ void read_points_block_update_knn(const std::string &file_path, uint64_t offset,
     std::ifstream in(file_path, std::ios::binary);
     if (!in.is_open()) { elog(WARNING, "Failed to open block file: %s", file_path.c_str()); return; }
     in.seekg(offset, std::ios::beg);
-    for (uint32_t i=0;i<count;++i){ KnnCand cand{}; uint32_t fid,row; in.read(reinterpret_cast<char*>(&cand.x),4); in.read(reinterpret_cast<char*>(&cand.y),4); in.read(reinterpret_cast<char*>(&cand.z),4); in.read(reinterpret_cast<char*>(&fid),4); in.read(reinterpret_cast<char*>(&row),4); if (!in) break; cand.fid=fid; cand.row=row; float dx=cand.x-c.x,dy=cand.y-c.y,dz=cand.z-c.z; cand.dist2=dx*dx+dy*dy+dz*dz; if ((int)heap.size()<k) heap.emplace(cand.dist2,cand); else if (cand.dist2<heap.top().first){ heap.pop(); heap.emplace(cand.dist2,cand);} }
+    for (uint32_t i=0;i<count;++i){
+        KnnCand cand{}; uint32_t fid,row;
+        in.read(reinterpret_cast<char*>(&cand.x),4);
+        in.read(reinterpret_cast<char*>(&cand.y),4);
+        in.read(reinterpret_cast<char*>(&cand.z),4);
+        in.read(reinterpret_cast<char*>(&fid),4);
+        in.read(reinterpret_cast<char*>(&row),4);
+        if (!in) break;
+        cand.fid=fid; cand.row=row;
+        // Distance in meters squared using lon/lat degrees and z in meters
+        double d2m = distance_meters2_3d((double)c.x, (double)c.y, (double)c.z,
+                                         (double)cand.x, (double)cand.y, (double)cand.z);
+        cand.dist2 = (float)d2m;
+        if ((int)heap.size()<k) heap.emplace(cand.dist2,cand);
+        else if (cand.dist2<heap.top().first){ heap.pop(); heap.emplace(cand.dist2,cand);} }
 }
 
 void read_points_block_filter_radius(const std::string &file_path, uint64_t offset, uint32_t count,
@@ -483,7 +498,34 @@ void read_points_block_filter_radius(const std::string &file_path, uint64_t offs
     std::ifstream in(file_path, std::ios::binary);
     if (!in.is_open()) { elog(WARNING, "Failed to open block file: %s", file_path.c_str()); return; }
     in.seekg(offset, std::ios::beg);
-    float r2 = radius * radius;
-    for (uint32_t i=0;i<count;++i){ float x,y,z; uint32_t fid,row; in.read(reinterpret_cast<char*>(&x),4); in.read(reinterpret_cast<char*>(&y),4); in.read(reinterpret_cast<char*>(&z),4); in.read(reinterpret_cast<char*>(&fid),4); in.read(reinterpret_cast<char*>(&row),4); if (!in) break; float dx=x-c.x, dy=y-c.y, dz=z-c.z; float d2=dx*dx+dy*dy+dz*dz; if (d2>r2) continue; SimplePoint p{}; p.x=x;p.y=y;p.z=z;p.time=0.0f;p.data_type=TRACE_TYPE_POINTCLOUD;p.fid=(int)fid;p.pid=(int)row;p.foreign_key=0; out.push_back(p);} }
+    // Interpret x=lon(deg), y=lat(deg), z=height(m). Compute 3D distance in meters.
+    const double R = 6371008.8; // mean Earth radius in meters
+    const double lat0 = (double)c.y * M_PI / 180.0;
+    const double lon0 = (double)c.x * M_PI / 180.0;
+    const double r2 = (double)radius * (double)radius;
+    for (uint32_t i=0;i<count;++i){
+        float x,y,z; uint32_t fid,row;
+        in.read(reinterpret_cast<char*>(&x),4);
+        in.read(reinterpret_cast<char*>(&y),4);
+        in.read(reinterpret_cast<char*>(&z),4);
+        in.read(reinterpret_cast<char*>(&fid),4);
+        in.read(reinterpret_cast<char*>(&row),4);
+        if (!in) break;
+        // horizontal great-circle distance using haversine
+        double lat = (double)y * M_PI / 180.0;
+        double lon = (double)x * M_PI / 180.0;
+        double dlat = lat - lat0;
+        double dlon = lon - lon0;
+        double sin_dlat2 = std::sin(dlat*0.5);
+        double sin_dlon2 = std::sin(dlon*0.5);
+        double a = sin_dlat2*sin_dlat2 + std::cos(lat0)*std::cos(lat)*sin_dlon2*sin_dlon2;
+        double cang = 2.0 * std::atan2(std::sqrt(a), std::sqrt(std::max(0.0, 1.0 - a)));
+        double horizontal_m = R * cang;
+        double dz = (double)z - (double)c.z; // z already meters
+        double d2 = horizontal_m*horizontal_m + dz*dz;
+        if (d2 > r2) continue;
+        SimplePoint p{}; p.x=x;p.y=y;p.z=z;p.time=0.0f;p.data_type=TRACE_TYPE_POINTCLOUD;p.fid=(int)fid;p.pid=(int)row;p.foreign_key=0; out.push_back(p);
+    }
+}
 
 

@@ -22,6 +22,7 @@
 
 // 项目头文件
 #include "../include/trace.h"
+#include "../include/geo_utils.h"
 #include "../include/parameter.h"
 #include "../include/data_loader.h"
 #include "../include/pgutils.h"
@@ -554,24 +555,17 @@ std::vector<std::pair<SimplePoint, float>> trace_knn_query_impl(const SimplePoin
         return results;
     }
 
-    // Initial radius from dataset diagonal and ensure intersection with dataset bbox
+    // Initial radius from dataset diagonal (in meters) and ensure intersection with dataset bbox
     SimpleBounds dbounds; trace::get_current_dataset_bounds(dbounds);
-    float dx= dbounds.max_x - dbounds.min_x;
-    float dy= dbounds.max_y - dbounds.min_y;
-    float dz= dbounds.max_z - dbounds.min_z;
-    float diag = std::sqrt(std::max(0.0f, dx*dx + dy*dy + dz*dz));
-    if (!(diag > 0.0f)) diag = 100.0f;
-    float radius = std::max(0.001f, diag * 0.01f);
-    // distance from center to dataset bbox (min distance)
-    float sdx=0, sdy=0, sdz=0;
-    if (center.x < dbounds.min_x) sdx = dbounds.min_x - center.x; else if (center.x > dbounds.max_x) sdx = center.x - dbounds.max_x;
-    if (center.y < dbounds.min_y) sdy = dbounds.min_y - center.y; else if (center.y > dbounds.max_y) sdy = center.y - dbounds.max_y;
-    if (center.z < dbounds.min_z) sdz = dbounds.min_z - center.z; else if (center.z > dbounds.max_z) sdz = center.z - dbounds.max_z;
-    float dmin2 = sdx*sdx + sdy*sdy + sdz*sdz;
-    if (dmin2 > 0.0f) {
-        float dmin = std::sqrt(dmin2);
-        if (radius < dmin) radius = dmin + 1e-6f;
-    }
+    double horiz_diag_m = haversine_horizontal_meters((double)dbounds.min_x, (double)dbounds.min_y,
+                                                      (double)dbounds.max_x, (double)dbounds.max_y);
+    double dz_m = (double)dbounds.max_z - (double)dbounds.min_z; // z already meters
+    double diag_m = std::sqrt(std::max(0.0, horiz_diag_m*horiz_diag_m + dz_m*dz_m));
+    if (!(diag_m > 0.0)) diag_m = 100.0;
+    double radius_m = std::max(0.001, diag_m * 0.01);
+    // minimum distance from center to dataset bbox (in meters)
+    double dmin_m = min_distance_meters_to_bbox(center, dbounds);
+    if (radius_m < dmin_m) radius_m = dmin_m + 1e-6;
 
     std::priority_queue<std::pair<float,KnnCand>> heap; // max-heap by dist2
     const int max_expansions = 64;
@@ -579,9 +573,8 @@ std::vector<std::pair<SimplePoint, float>> trace_knn_query_impl(const SimplePoin
     std::unordered_set<std::string> visited_blocks;
 
     while (true) {
-        // Query buckets intersecting current AABB
-        SimpleBounds bbox(center.x - radius, center.y - radius, center.z - radius,
-                          center.x + radius, center.y + radius, center.z + radius);
+        // Query buckets intersecting current AABB converted from meter radius
+        SimpleBounds bbox = meters_radius_bbox_deg(center, radius_m);
         auto buckets = db_query_buckets_intersecting(dataset_path, bbox);
         for (const auto &bm : buckets) {
             // de-duplicate blocks across expansions
@@ -592,14 +585,14 @@ std::vector<std::pair<SimplePoint, float>> trace_knn_query_impl(const SimplePoin
         }
 
         if ((int)heap.size() >= k) {
-            float cutoff = std::sqrt(heap.top().first);
-            if (radius >= cutoff) break;
-            radius = cutoff;
+            double cutoff_m = std::sqrt((double)heap.top().first);
+            if (radius_m >= cutoff_m) break;
+            radius_m = cutoff_m;
         } else {
-            radius *= 2.0f;
+            radius_m *= 2.0;
         }
 
-        if (++expansions >= max_expansions || radius > diag * 2.0f) break;
+        if (++expansions >= max_expansions || radius_m > diag_m * 2.0) break;
     }
 
     // Output top-k sorted by distance
@@ -632,9 +625,16 @@ std::vector<SimplePoint> trace_buffer_query_impl(const SimplePoint& center, floa
         return results;
     }
     
-    // Compute bounding box of the sphere and use bucket-level pruning
-    SimpleBounds bbox(center.x - radius, center.y - radius, center.z - radius,
-                      center.x + radius, center.y + radius, center.z + radius);
+    // Compute bounding box in degrees for the meter radius around center (lon/lat in deg, z in m)
+    double lat0_rad = (double)center.y * M_PI / 180.0;
+    const double inv_m_per_deg_lat = 1.0 / 111320.0;
+    const double inv_m_per_deg_lon = 1.0 / 111320.0;
+    double coslat = std::cos(lat0_rad);
+    if (coslat < 0.000001) coslat = 0.000001;
+    double dlat_deg = (double)radius * inv_m_per_deg_lat;
+    double dlon_deg = (double)radius * (inv_m_per_deg_lon / coslat);
+    SimpleBounds bbox((float)(center.x - dlon_deg), (float)(center.y - dlat_deg), (float)(center.z - radius),
+                      (float)(center.x + dlon_deg), (float)(center.y + dlat_deg), (float)(center.z + radius));
     auto buckets = db_query_buckets_intersecting(dataset_path, bbox);
     for (const auto &bm : buckets) {
         // Further filter within the block by radius

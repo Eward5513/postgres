@@ -68,15 +68,15 @@ FROM trace_knn_query(116.3978, 39.9046, 10.9, 5, 7);
 
 -- 查询最近的3个点
 SELECT 
-    distance,
+    ROUND(distance::numeric, 1) as distance_m,
     x, y, z
 FROM trace_knn_query(116.3978, 39.9046, 10.9, 3, 7)
 ORDER BY distance;
-  distance   |    x     |    y    |  z   
--------------+----------+---------+------
-           0 | 116.3978 | 39.9046 | 10.9
- 0.099999525 | 116.3977 | 39.9045 | 10.8
-  0.10000049 | 116.3979 | 39.9047 |   11
+ distance_m |    x     |    y    |  z   
+------------+----------+---------+------
+        0.0 | 116.3978 | 39.9046 | 10.9
+       13.9 | 116.3977 | 39.9045 | 10.8
+       14.6 | 116.3979 | 39.9047 |   11
 (3 rows)
 
 -- 测试3: 不同k值测试
@@ -209,12 +209,12 @@ WITH knn_results AS (
 )
 SELECT 
     COUNT(*) as total_results,
-    MIN(distance) as min_distance,
-    MAX(distance) as max_distance
+    ROUND(MIN(distance)::numeric, 1) as min_distance_m,
+    ROUND(MAX(distance)::numeric, 1) as max_distance_m
 FROM knn_results;
- total_results | min_distance | max_distance 
----------------+--------------+--------------
-             5 |            0 |   0.20000097
+ total_results | min_distance_m | max_distance_m 
+---------------+-----------------+-----------------
+             5 |             0.0 |            28.5
 (1 row)
 
 -- 测试8: 边界情况测试
@@ -235,7 +235,7 @@ SELECT COUNT(*) as knn_outside_range
 FROM trace_knn_query(200.0, 200.0, 200.0, 5, 7);
  knn_outside_range 
 -------------------
-                 5
+                 0
 (1 row)
 
 -- 查询不存在的数据类型
@@ -255,15 +255,15 @@ SELECT 'Testing specific result validation' as test_phase;
 
 -- 查询最近的点并显示详细信息
 SELECT 
-    ROUND(distance::numeric, 6) as rounded_distance,
+    ROUND(distance::numeric, 1) as rounded_distance_m,
     x, y, z
 FROM trace_knn_query(116.3974, 39.9042, 10.5, 3, 7)
 ORDER BY distance;
- rounded_distance |    x     |    y    |  z   
-------------------+----------+---------+------
-         0.000000 | 116.3974 | 39.9042 | 10.5
-         0.100000 | 116.3975 | 39.9043 | 10.6
-         0.200000 | 116.3976 | 39.9044 | 10.7
+ rounded_distance_m |    x     |    y    |  z   
+--------------------+----------+---------+------
+                0.0 | 116.3974 | 39.9042 | 10.5
+               13.9 | 116.3975 | 39.9043 | 10.6
+               27.8 | 116.3976 | 39.9044 | 10.7
 (3 rows)
 
 -- 测试10: 性能和统计

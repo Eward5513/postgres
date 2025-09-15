@@ -35,17 +35,17 @@ FROM (
 -- 基本buffer查询
 SELECT 'Testing basic buffer query' as test_phase;
 
--- 以数据集1中心，半径0.15
+-- 以数据集1中心，半径150米
 SELECT COUNT(*) as cnt
-FROM trace_buffer_query(116.3978, 39.9046, 10.9, 0.15, 7);
+FROM trace_buffer_query(116.3978, 39.9046, 10.9, 150.0, 7);
 
--- 较大半径，覆盖一个数据集
+-- 较大半径，覆盖一个数据集（约250米）
 SELECT COUNT(*) as cnt_large
-FROM trace_buffer_query(116.3978, 39.9046, 10.9, 0.25, 7);
+FROM trace_buffer_query(116.3978, 39.9046, 10.9, 250.0, 7);
 
--- 数据类型过滤
+-- 数据类型过滤（半径250米）
 SELECT COUNT(*) as cnt_type1
-FROM trace_buffer_query(116.3978, 39.9046, 10.9, 0.25, 1);
+FROM trace_buffer_query(116.3978, 39.9046, 10.9, 250.0, 1);
 
 -- 边界与异常
 SELECT 'Testing boundary and invalid cases' as test_phase;
@@ -53,9 +53,9 @@ SELECT 'Testing boundary and invalid cases' as test_phase;
 SELECT COUNT(*) FROM trace_buffer_query(116.3978, 39.9046, 10.9, 0.0, 7);
 \set ON_ERROR_STOP on
 
--- 结果检查（取前3个点）
+-- 结果检查（取前3个点，半径210米）
 SELECT x,y,z
-FROM trace_buffer_query(116.3974, 39.9042, 10.5, 0.21, 7)
+FROM trace_buffer_query(116.3974, 39.9042, 10.5, 210.0, 7)
 ORDER BY x,y,z
 LIMIT 3;
 

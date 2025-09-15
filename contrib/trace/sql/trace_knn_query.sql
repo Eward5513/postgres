@@ -47,7 +47,7 @@ FROM trace_knn_query(116.3978, 39.9046, 10.9, 5, 7);
 
 -- 查询最近的3个点
 SELECT 
-    distance,
+    ROUND(distance::numeric, 1) as distance_m,
     x, y, z
 FROM trace_knn_query(116.3978, 39.9046, 10.9, 3, 7)
 ORDER BY distance;
@@ -122,8 +122,8 @@ WITH knn_results AS (
 )
 SELECT 
     COUNT(*) as total_results,
-    MIN(distance) as min_distance,
-    MAX(distance) as max_distance
+    ROUND(MIN(distance)::numeric, 1) as min_distance_m,
+    ROUND(MAX(distance)::numeric, 1) as max_distance_m
 FROM knn_results;
 
 -- 测试8: 边界情况测试
@@ -148,7 +148,7 @@ SELECT 'Testing specific result validation' as test_phase;
 
 -- 查询最近的点并显示详细信息
 SELECT 
-    ROUND(distance::numeric, 6) as rounded_distance,
+    ROUND(distance::numeric, 1) as rounded_distance_m,
     x, y, z
 FROM trace_knn_query(116.3974, 39.9042, 10.5, 3, 7)
 ORDER BY distance;
